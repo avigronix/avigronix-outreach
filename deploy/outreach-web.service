@@ -1,0 +1,18 @@
+# /etc/systemd/system/outreach-web.service
+# Web app on 127.0.0.1:8000 (Nginx proxies to it). Migrations run before every start.
+[Unit]
+Description=Avigronix Outreach - web
+After=network.target postgresql.service
+Requires=postgresql.service
+
+[Service]
+User=outreach
+Group=outreach
+WorkingDirectory=/opt/outreach
+ExecStartPre=/opt/outreach/.venv/bin/alembic upgrade head
+ExecStart=/opt/outreach/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --proxy-headers --forwarded-allow-ips=127.0.0.1
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

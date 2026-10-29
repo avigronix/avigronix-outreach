@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Outreach{% endblock %} · Avigronix</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/htmx.min.js" defer></script>
+</head>
+<body hx-headers='{"X-CSRF-Token": "{{ csrf_token }}"}'>
+{% block layout %}
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-name">AVIGRONIX</div>
+      <div class="brand-sub">Outreach dashboard</div>
+    </div>
+    <nav class="nav">
+      {% for key, label, url, roles, ready in nav %}
+        {% if ready %}
+          <a href="{{ url }}" class="{{ 'active' if active == key }}">{{ label }}{% if badges.get(key) %}<span class="nav-badge">{{ badges[key] }}</span>{% endif %}</a>
+        {% else %}
+          <span class="soon" title="Coming in a later phase">{{ label }}</span>
+        {% endif %}
+      {% endfor %}
+    </nav>
+    {% if user %}
+    <div class="signed-in">
+      <div class="muted-sm">Signed in as</div>
+      <div class="who">{{ user.name }} · {{ user.role|capitalize }}</div>
+      <form method="post" action="/logout">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button class="link-btn" type="submit">Log out</button>
+      </form>
+    </div>
+    {% endif %}
+  </aside>
+  <main class="main">
+    {% for kind, message in flashes %}
+      <div class="flash flash-{{ kind }}">{{ message }}</div>
+    {% endfor %}
+    {% block content %}{% endblock %}
+  </main>
+</div>
+{% endblock %}
+</body>
+</html>

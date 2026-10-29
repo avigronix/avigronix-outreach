@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% set active = "users" %}
+{% block title %}Users{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Users</h1>
+    <p class="subtitle">Admin: everything · Manager: leads, templates, campaigns, reports · Sales: assigned leads and replies</p>
+  </div>
+</div>
+
+<div class="grid-2-1">
+  <div class="card">
+    <div class="card-head"><h2>Team</h2></div>
+    <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Last login</th><th>Actions</th></tr>
+      </thead>
+      <tbody>
+      {% for u in users %}
+        <tr>
+          <td><strong>{{ u.name }}</strong></td>
+          <td>{{ u.email }}</td>
+          <td>
+            {% if u.id == user.id %}
+              {{ u.role|capitalize }}
+            {% else %}
+            <form method="post" action="/users/{{ u.id }}/role" class="inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <select name="role" onchange="this.form.submit()">
+                {% for r in roles %}<option value="{{ r }}" {{ 'selected' if r == u.role }}>{{ r|capitalize }}</option>{% endfor %}
+              </select>
+            </form>
+            {% endif %}
+          </td>
+          <td>{% if u.is_active %}<span class="badge badge-green">Active</span>{% else %}<span class="badge badge-grey">Disabled</span>{% endif %}</td>
+          <td class="muted">{{ u.last_login_at|local }}</td>
+          <td class="actions">
+            {% if u.id != user.id %}
+            <form method="post" action="/users/{{ u.id }}/toggle" class="inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <button class="btn btn-sm" type="submit">{{ 'Disable' if u.is_active else 'Enable' }}</button>
+            </form>
+            {% endif %}
+            <details class="inline-details">
+              <summary class="btn btn-sm">Reset password</summary>
+              <form method="post" action="/users/{{ u.id }}/reset" class="stack-sm">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="text" name="password" placeholder="New password (10+ chars)" minlength="10" required autocomplete="off">
+                <button class="btn btn-sm btn-primary" type="submit">Save</button>
+              </form>
+            </details>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+
+  <form class="card form-card" method="post" action="/users">
+    <h2>Add user</h2>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>Name <input type="text" name="name" required></label>
+    <label>Email <input type="email" name="email" required></label>
+    <label>Role
+      <select name="role">
+        {% for r in roles %}<option value="{{ r }}" {{ 'selected' if r == 'sales' }}>{{ r|capitalize }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Temporary password <input type="text" name="password" minlength="10" required autocomplete="off"></label>
+    <button class="btn btn-primary btn-block" type="submit">Create user</button>
+  </form>
+</div>
+{% endblock %}

@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Unsubscribe{% endblock %}
+{% block layout %}
+<div class="login-wrap">
+  <div class="card login-card">
+    <div class="brand brand-dark">
+      <div class="brand-name">{{ company }}</div>
+    </div>
+    {% if invalid %}
+      <h2>This link is not valid</h2>
+      <p class="muted">Please use the unsubscribe link from the email exactly as it was, or reply to the email with "unsubscribe".</p>
+    {% elif done %}
+      <h2>You're unsubscribed</h2>
+      <p class="muted">{{ email }} will not receive any more emails from {{ company }}. This takes effect immediately.</p>
+    {% else %}
+      <h2>Unsubscribe</h2>
+      <p class="muted">Stop all emails from {{ company }} to {{ email }}?</p>
+      <form method="post" action="/u/{{ token }}?from=page">
+        <button class="btn btn-primary btn-block" type="submit">Unsubscribe</button>
+      </form>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

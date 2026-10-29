@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% from "_macros.html" import import_steps %}
+{% set active = "imports" %}
+{% block title %}Import {{ imp.file_name }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Import leads</h1>
+    <p class="subtitle">
+      {{ imp.file_name }} · {{ "{:,}".format(imp.total) }} rows
+      {% if imp.list_name %}· {{ imp.list_name }}{% endif %}
+      · {{ source_types.get(imp.source_type, '') }}
+      {% if imp.tags %}· tags: {{ imp.tags|join(', ') }}{% endif %}
+    </p>
+  </div>
+</div>
+{{ import_steps(4 if imp.status in ('validated', 'importing', 'done') else 3) }}
+
+{% include "imports/_progress.html" %}
+{% endblock %}

@@ -1,0 +1,25 @@
+# Secrets (keep .env.example)
+.env
+
+# Tests (kept local only)
+tests/
+.pytest_cache/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Local dev data (portable Postgres, pgdata, backups, logs) and app data (uploads, backups)
+.localdev/
+data/
+*.dump
+*.log
+
+# Editor / OS / Claude Code
+.vscode/
+.idea/
+.claude/
+Thumbs.db
+.DS_Store

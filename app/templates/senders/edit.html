@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% set active = "senders" %}
+{% block title %}{{ s.from_email or "New sender" }}{% endblock %}
+{% block content %}
+<p class="crumbs"><a href="/senders">Senders</a> / {{ s.from_email or "New" }}</p>
+<div class="page-head">
+  <div>
+    <h1>{{ s.from_email or ("New SES sender" if s.type == "ses" else "New SMTP mailbox") }}</h1>
+    <p class="subtitle">
+      {% if s.type == "ses" %}Amazon SES · region from .env · the address or its domain must be verified in SES
+      {% else %}SMTP mailbox (Zoho / Google Workspace) · use an app password, not the account password{% endif %}
+    </p>
+  </div>
+</div>
+
+{% if s.type == "ses" and not ses_ready %}
+  <div class="banner banner-warn"><strong>AWS keys missing:</strong> set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in .env, then restart (<code>sudo systemctl restart outreach-web outreach-worker</code>).</div>
+{% endif %}
+
+<div class="grid-1-1">
+  <form class="card form-card" method="post" action="{{ '/senders' if is_new else '/senders/%d'|format(s.id) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="type" value="{{ s.type }}">
+    <h2>Identity</h2>
+    <div class="row-2">
+      <label>From name <input type="text" name="from_name" value="{{ s.from_name }}" placeholder="Vikas from Avigronix" required></label>
+      <label>From email <input type="email" name="from_email" value="{{ s.from_email }}" placeholder="{{ 'vikas@mail.avigronix.com' if s.type == 'ses' else 'avinash@avigronix.in' }}" required></label>
+    </div>
+    <label>Reply-To (monitored mailbox) <input type="email" name="reply_to" value="{{ s.reply_to }}" placeholder="outreach-replies@avigronix.com"></label>
+
+    {% if s.type == "smtp" %}
+    <h2>SMTP</h2>
+    <div class="row-2">
+      <label>Host <input type="text" name="smtp_host" value="{{ s.smtp_host }}" placeholder="smtp.zoho.com"></label>
+      <label>Port <select name="smtp_port">
+        <option value="465" {{ 'selected' if s.smtp_port == 465 }}>465 (SSL)</option>
+        <option value="587" {{ 'selected' if s.smtp_port == 587 }}>587 (STARTTLS)</option>
+      </select></label>
+    </div>
+    <div class="row-2">
+      <label>Username <span class="muted-sm">(empty = from email)</span><input type="text" name="smtp_user" value="{{ s.smtp_user }}"></label>
+      <label>App password <span class="muted-sm">{{ '(saved, encrypted — leave empty to keep)' if s.smtp_password_enc else '' }}</span>
+        <input type="password" name="smtp_password" autocomplete="new-password"></label>
+    </div>
+    <div class="row-2">
+      <label>IMAP host <span class="muted-sm">(bounce reading)</span><input type="text" name="imap_host" value="{{ s.imap_host }}" placeholder="imap.zoho.com"></label>
+      <label>IMAP port <input type="number" name="imap_port" value="{{ s.imap_port }}"></label>
+    </div>
+    <label>DKIM selector <span class="muted-sm">(for the DNS check, e.g. "zmail")</span><input type="text" name="dkim_selector" value="{{ s.dkim_selector }}"></label>
+    {% endif %}
+
+    <h2>Limits</h2>
+    <div class="row-2">
+      <label>Daily cap <input type="number" name="daily_cap" value="{{ s.daily_cap }}" min="1" max="10000"></label>
+      <label>Warm-up day <span class="muted-sm">(moves up daily while healthy)</span><input type="number" name="warmup_day" value="{{ s.warmup_day }}" min="1"></label>
+    </div>
+    <div class="row-2">
+      <label>Gap between sends, min (s) <input type="number" name="gap_min_sec" value="{{ s.gap_min_sec }}" min="0"></label>
+      <label>Gap between sends, max (s) <input type="number" name="gap_max_sec" value="{{ s.gap_max_sec }}" min="0"></label>
+    </div>
+    <label>Warm-up override cap <span class="muted-sm">(admin only; empty = follow the warm-up plan)</span>
+      <input type="number" name="warmup_override_cap" value="{{ s.warmup_override_cap or '' }}" min="1"></label>
+    {% if not is_new %}
+      <p class="muted-sm">Today: warm-up plan allows {{ table_cap }}/day → effective cap <strong>{{ cap }}</strong>/day (lower of warm-up and daily cap).</p>
+    {% endif %}
+    <button class="btn btn-primary" type="submit">{{ 'Add sender' if is_new else 'Save sender' }}</button>
+  </form>
+
+  {% if not is_new %}
+  <div class="stack">
+    <div class="card">
+      <div class="card-head">
+        <h2>DNS check</h2>
+        <form method="post" action="/senders/{{ s.id }}/dns-check" class="inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button class="btn btn-sm" type="submit">Run check</button>
+        </form>
+      </div>
+      {% if s.dns_checked_at %}
+        <dl class="kv kv-wide">
+          {% for name, result in s.dns_result.items() %}
+            <dt>{{ name }}<div class="muted-sm break">{{ result[1] }}</div></dt>
+            <dd>{% if result[0] %}<span class="badge badge-green">Pass</span>{% else %}<span class="badge badge-red">Fail</span>{% endif %}</dd>
+          {% endfor %}
+        </dl>
+        <p class="muted-sm">Checked {{ s.dns_checked_at|local }} IST</p>
+      {% else %}
+        <p class="muted">Not checked yet.</p>
+      {% endif %}
+    </div>
+
+    <form class="card form-card" method="post" action="/senders/{{ s.id }}/test">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <h2>Send test email</h2>
+      <label>To <input type="email" name="to_email" value="{{ user.email }}" required></label>
+      <button class="btn" type="submit">Send test</button>
+      <p class="muted-sm">Then open it in Gmail → ⋮ → Show original: SPF, DKIM and DMARC should all say PASS.</p>
+    </form>
+
+    <div class="card form-card">
+      <h2>Status</h2>
+      <p>Currently <strong>{{ s.status }}</strong>{% if s.pause_reason %} — {{ s.pause_reason }}{% endif %}.</p>
+      <div class="head-actions">
+        {% for st in ["active", "paused", "disabled"] if st != s.status %}
+        <form method="post" action="/senders/{{ s.id }}/status" class="inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="status" value="{{ st }}">
+          <button class="btn btn-sm" type="submit">{{ {"active": "Activate", "paused": "Pause", "disabled": "Disable"}[st] }}</button>
+        </form>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

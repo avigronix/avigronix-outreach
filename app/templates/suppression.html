@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% from "_macros.html" import pager %}
+{% set active = "suppression" %}
+{% block title %}Suppression list{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Suppression list</h1>
+    <p class="subtitle">Never emailed again. Checked right before every send — an email entry blocks that address, a domain entry blocks everyone at that company.</p>
+  </div>
+  <a class="btn" href="/suppression/export.csv">Export CSV</a>
+</div>
+
+<div class="kpis">
+  <div class="card kpi"><div class="kpi-label">Total</div><div class="kpi-value">{{ "{:,}".format(by_reason.values()|sum) }}</div></div>
+  {% for r in reasons %}
+  <div class="card kpi"><div class="kpi-label">{{ r.replace('_', ' ')|capitalize }}</div><div class="kpi-value">{{ "{:,}".format(by_reason.get(r, 0)) }}</div></div>
+  {% endfor %}
+</div>
+
+<div class="grid-2-1">
+  <div class="card">
+    <form class="filters filters-plain" method="get" action="/suppression">
+      <input type="search" name="q" value="{{ q }}" placeholder="Search email or domain">
+      <button class="btn" type="submit">Search</button>
+    </form>
+    <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Email / domain</th><th>Kind</th><th>Reason</th><th>Source</th><th>Added (IST)</th>{% if user.role == 'admin' %}<th></th>{% endif %}</tr></thead>
+      <tbody>
+      {% for s in rows %}
+        <tr>
+          <td><strong>{{ s.value }}</strong></td>
+          <td>{{ s.kind }}</td>
+          <td><span class="badge badge-{{ 'red' if s.reason in ('complaint', 'hard_bounce') else 'grey' }}">{{ s.reason.replace('_', ' ') }}</span></td>
+          <td class="muted">{{ s.source }}</td>
+          <td class="muted">{{ s.created_at|local }}</td>
+          {% if user.role == 'admin' %}
+          <td>
+            <form method="post" action="/suppression/{{ s.id }}/delete" onsubmit="return confirm('Remove this entry? It may be emailed again.')">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <button class="btn btn-sm" type="submit">Remove</button>
+            </form>
+          </td>
+          {% endif %}
+        </tr>
+      {% else %}
+        <tr><td colspan="6" class="muted">Nothing here.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {{ pager(page, total, page_size, "/suppression", "q=" ~ q|urlencode if q else "") }}
+  </div>
+
+  <div class="stack">
+    <form class="card form-card" method="post" action="/suppression">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <h2>Add by hand</h2>
+      <label>Emails or domains <span class="muted-sm">(one per line; "competitor.com" blocks the whole domain)</span>
+        <textarea name="values" rows="5" required></textarea>
+      </label>
+      <button class="btn btn-primary" type="submit">Add</button>
+    </form>
+    <form class="card form-card" method="post" action="/suppression/import" enctype="multipart/form-data">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <h2>Import CSV</h2>
+      <label>File <span class="muted-sm">(first column: email or domain)</span>
+        <input type="file" name="file" accept=".csv,.txt" required>
+      </label>
+      <button class="btn" type="submit">Import</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

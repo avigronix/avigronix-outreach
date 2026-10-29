@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% from "_macros.html" import lead_status, pager %}
+{% set active = "leads" %}
+{% block title %}Leads{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Leads</h1>
+    <p class="subtitle">{{ "{:,}".format(total) }} leads{% if filters %} match these filters{% endif %}</p>
+  </div>
+  {% if can_manage %}
+  <div class="head-actions">
+    <a class="btn" href="/leads/export.csv?{{ query }}">Export CSV</a>
+    <a class="btn btn-primary" href="/imports/new">Import leads</a>
+  </div>
+  {% endif %}
+</div>
+
+<form class="card filters" method="get" action="/leads">
+  <input type="search" name="q" value="{{ filters.q or '' }}" placeholder="Search email, name, company">
+  <select name="status">
+    <option value="">Any status</option>
+    {% for key, label in statuses.items() %}<option value="{{ key }}" {{ 'selected' if filters.status == key }}>{{ label }}</option>{% endfor %}
+  </select>
+  <input type="text" name="tag" value="{{ filters.tag or '' }}" placeholder="Tag">
+  <select name="source">
+    <option value="">Any source</option>
+    {% for key, label in source_types.items() %}<option value="{{ key }}" {{ 'selected' if filters.source == key }}>{{ label }}</option>{% endfor %}
+  </select>
+  <input type="text" name="country" value="{{ filters.country or '' }}" placeholder="Country (US)" class="short">
+  <input type="text" name="state" value="{{ filters.state or '' }}" placeholder="State (TX)" class="short">
+  {% if can_manage %}
+  <select name="owner">
+    <option value="">Any owner</option>
+    <option value="none" {{ 'selected' if filters.owner == 'none' }}>No owner</option>
+    {% for id, name in owners.items() %}<option value="{{ id }}" {{ 'selected' if filters.owner == id|string }}>{{ name }}</option>{% endfor %}
+  </select>
+  {% endif %}
+  <select name="campaign">
+    <option value="">Any campaign</option>
+    {% for id, name in campaigns %}<option value="{{ id }}" {{ 'selected' if filters.campaign == id|string }}>{{ name }}</option>{% endfor %}
+  </select>
+  {% if filters.import_id %}<input type="hidden" name="import_id" value="{{ filters.import_id }}">{% endif %}
+  <button class="btn" type="submit">Filter</button>
+  {% if filters %}<a href="/leads">Clear</a>{% endif %}
+</form>
+
+<form method="post" action="/leads/bulk" class="card" id="bulk-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  {% for key, value in filters.items() %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}
+
+  {% if can_manage %}
+  <div class="bulk-bar">
+    <select name="action" required>
+      <option value="">Bulk action…</option>
+      <option value="add_tag">Add tag</option>
+      <option value="remove_tag">Remove tag</option>
+      <option value="set_owner">Set owner (user id or empty)</option>
+      {% if user.role == 'admin' %}<option value="delete">Delete leads</option>{% endif %}
+    </select>
+    <input type="text" name="value" placeholder="Tag, or owner" list="owner-ids" class="short">
+    <datalist id="owner-ids">{% for id, name in owners.items() %}<option value="{{ id }}">{{ name }}</option>{% endfor %}</datalist>
+    <label class="check"><input type="checkbox" name="all_matching" value="1"> All {{ "{:,}".format(total) }} matching leads</label>
+    <button class="btn btn-sm" type="submit"
+            onclick="return this.form.elements['action'].value !== 'delete' || confirm('Delete the selected leads? This cannot be undone.')">Apply</button>
+  </div>
+  {% endif %}
+
+  <div class="table-wrap">
+  <table class="table">
+    <thead>
+      <tr>
+        {% if can_manage %}<th><input type="checkbox" onclick="document.querySelectorAll('.pick').forEach(c => c.checked = this.checked)"></th>{% endif %}
+        <th>Lead</th><th>Company</th><th>Location</th><th>Status</th><th>Tags</th><th>Source</th><th>Owner</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for lead in leads %}
+      <tr>
+        {% if can_manage %}<td><input class="pick" type="checkbox" name="ids" value="{{ lead.id }}"></td>{% endif %}
+        <td>
+          <a href="/leads/{{ lead.id }}"><strong>{{ (lead.first_name ~ ' ' ~ lead.last_name).strip() or lead.email }}</strong></a>
+          <div class="muted-sm">{{ lead.email }}
+            {% if lead.is_role %}<span class="badge badge-amber">role</span>{% endif %}
+            {% if lead.is_free_mail %}<span class="badge badge-amber">free-mail</span>{% endif %}
+          </div>
+        </td>
+        <td>{{ lead.company }}<div class="muted-sm">{{ lead.title }}</div></td>
+        <td>{{ [lead.city, lead.state, lead.country]|select|join(', ') }}<div class="muted-sm">{{ lead.timezone or 'campaign default tz' }}</div></td>
+        <td>{{ lead_status(lead.status, statuses) }}</td>
+        <td>{% for t in lead.tags %}<span class="tag">{{ t }}</span>{% endfor %}</td>
+        <td class="muted">{{ source_types.get(lead.source_type, lead.source_type) }}</td>
+        <td class="muted">{{ owners.get(lead.owner_id, '—') }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="8" class="muted">No leads found.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</form>
+{{ pager(page, total, page_size, "/leads", query) }}
+{% endblock %}

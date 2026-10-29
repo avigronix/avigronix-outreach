@@ -1,0 +1,20 @@
+# /etc/systemd/system/outreach-worker.service
+# Sending tick, IMAP poll, daily jobs, nightly backup. Safe to restart: no email is ever sent twice.
+[Unit]
+Description=Avigronix Outreach - worker
+After=network.target postgresql.service outreach-web.service
+Requires=postgresql.service
+
+[Service]
+User=outreach
+Group=outreach
+WorkingDirectory=/opt/outreach
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/outreach/.venv/bin/python -m app.worker
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target

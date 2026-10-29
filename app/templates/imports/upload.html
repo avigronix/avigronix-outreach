@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% from "_macros.html" import import_steps %}
+{% set active = "imports" %}
+{% block title %}Import leads{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Import leads</h1>
+    <p class="subtitle">Excel (.xlsx) or CSV · up to 10 MB / 50,000 rows · first row must be the column names</p>
+  </div>
+</div>
+{{ import_steps(1) }}
+
+<form class="card form-card narrow" method="post" action="/imports" enctype="multipart/form-data">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <label>Lead file
+    <input type="file" name="file" accept=".xlsx,.csv" required>
+  </label>
+  <p class="muted-sm">Next you will match the file's columns to lead fields and say where the leads came from.</p>
+  <button class="btn btn-primary" type="submit">Upload and map columns</button>
+</form>
+{% endblock %}

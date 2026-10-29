@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% set active = "senders" %}
+{% block title %}Senders{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Senders</h1>
+    <p class="subtitle">SES identities (opt-in, clients, inquiries) and SMTP mailboxes (purchased or compiled lists). Each warms up over 4 weeks.</p>
+  </div>
+  <div class="head-actions">
+    <a class="btn" href="/senders/new?type=ses">Add SES sender</a>
+    <a class="btn btn-primary" href="/senders/new?type=smtp">Add SMTP mailbox</a>
+  </div>
+</div>
+
+<div class="card">
+  <div class="table-wrap">
+  <table class="table">
+    <thead><tr><th>Sender</th><th>Type</th><th>Warm-up</th><th>Today's cap</th><th>Gap</th><th>DNS</th><th>Status</th></tr></thead>
+    <tbody>
+    {% for s in senders %}
+      <tr>
+        <td><a href="/senders/{{ s.id }}"><strong>{{ s.from_email }}</strong></a><div class="muted-sm">{{ s.from_name }}</div></td>
+        <td>{{ s.type|upper }}</td>
+        <td>Day {{ s.warmup_day }} of {{ warmup_days }}{% if s.warmup_override_cap %} <span class="badge badge-amber">override</span>{% endif %}</td>
+        <td>{{ "{:,}".format(cap(s)) }}</td>
+        <td class="muted">{{ s.gap_min_sec }}–{{ s.gap_max_sec }} s</td>
+        <td>
+          {% if not s.dns_checked_at %}<span class="badge badge-grey">Not checked</span>
+          {% elif s.dns_ok %}<span class="badge badge-green">Pass</span>
+          {% else %}<span class="badge badge-red">Problems</span>{% endif %}
+        </td>
+        <td>
+          {% set colors = {"active": "green", "paused": "amber", "disabled": "grey"} %}
+          <span class="badge badge-{{ colors[s.status] }}">{{ s.status|capitalize }}</span>
+          {% if s.pause_reason %}<div class="muted-sm">{{ s.pause_reason }}</div>{% endif %}
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="7" class="muted">No senders yet. Add an SES sender or an SMTP mailbox.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endblock %}

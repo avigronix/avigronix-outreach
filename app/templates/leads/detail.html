@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% from "_macros.html" import lead_status %}
+{% set active = "leads" %}
+{% block title %}{{ lead.email }}{% endblock %}
+{% block content %}
+<p class="crumbs"><a href="/leads">Leads</a> / {{ lead.email }}</p>
+<div class="page-head">
+  <div>
+    <h1>{{ (lead.first_name ~ ' ' ~ lead.last_name).strip() or lead.email }} {{ lead_status(lead.status, statuses) }}</h1>
+    <p class="subtitle">{{ [lead.title, lead.company]|select|join(' · ') }}</p>
+  </div>
+</div>
+
+<div class="grid-2-1">
+  <div class="stack">
+    <div class="card">
+      <h2>Details</h2>
+      <dl class="kv">
+        <dt>Email</dt><dd>{{ lead.email }}
+          {% if lead.is_role %}<span class="badge badge-amber">role address</span>{% endif %}
+          {% if lead.is_free_mail %}<span class="badge badge-amber">free-mail</span>{% endif %}</dd>
+        <dt>Website</dt><dd>{{ lead.website or '—' }}</dd>
+        <dt>Location</dt><dd>{{ [lead.city, lead.state, lead.country]|select|join(', ') or '—' }}</dd>
+        <dt>Timezone</dt><dd>{{ lead.timezone or 'not known (campaign default)' }}</dd>
+        <dt>Industry</dt><dd>{{ lead.industry or '—' }}</dd>
+        <dt>Source</dt><dd>{{ source_types.get(lead.source_type, lead.source_type) }}
+          {% if imp %}· <a href="/imports/{{ imp.id }}">{{ imp.list_name or imp.file_name }}</a>{% endif %}</dd>
+        <dt>Added</dt><dd>{{ lead.created_at|local }} IST</dd>
+        {% for key, value in lead.custom.items() %}<dt>{{ key }}</dt><dd>{{ value }}</dd>{% endfor %}
+      </dl>
+    </div>
+
+    <div class="card">
+      <h2>Campaigns</h2>
+      {% for e, name in enrollments %}
+        <div class="timeline-row">
+          <div><a href="/campaigns/{{ e.campaign_id }}">{{ name }}</a> · step {{ e.current_step }}
+            <span class="badge badge-{{ {'active': 'green', 'completed': 'grey', 'stopped': 'red'}[e.state] }}">{{ e.state }}{{ ': ' ~ e.stop_reason if e.stop_reason }}</span>
+            {% if e.state == 'active' %}<div class="muted-sm">Next send {{ e.next_send_at|local }} IST</div>{% endif %}
+          </div>
+          {% if e.state == 'active' %}
+          <form method="post" action="/leads/{{ lead.id }}/stop">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button class="btn btn-sm" type="submit">Stop sequence</button>
+          </form>
+          {% endif %}
+        </div>
+      {% else %}
+        <p class="muted">Not in any campaign.</p>
+      {% endfor %}
+    </div>
+
+    <div class="card">
+      <h2>Timeline</h2>
+      {% for m, name in messages %}
+        <details class="timeline-row">
+          <summary>
+            <strong>{{ m.subject }}</strong>
+            <span class="badge badge-{{ {'sent': 'green', 'failed': 'red', 'retry': 'amber', 'unknown': 'amber'}.get(m.status, 'blue') }}">{{ m.status }}</span>
+            <div class="muted-sm">{{ name }} · step {{ m.step_no }} · {{ (m.sent_at or m.created_at)|local }} IST</div>
+          </summary>
+          <pre class="email-body">{{ m.body_text }}</pre>
+          {% if m.error %}<p class="muted-sm">{{ m.error }}</p>{% endif %}
+        </details>
+      {% else %}
+        <p class="muted">No emails sent yet.</p>
+      {% endfor %}
+      {% for e in events %}
+        <div class="timeline-row">
+          <div><span class="badge badge-{{ {'delivery': 'green', 'bounce_hard': 'red', 'bounce_soft': 'amber', 'complaint': 'red'}.get(e.type, 'grey') }}">{{ e.type.replace('_', ' ') }}</span>
+            <span class="muted-sm">{{ e.detail|truncate(90) }}</span></div>
+          <span class="muted-sm">{{ e.occurred_at|local }} IST</span>
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="stack">
+    {% if can_manage %}
+    <form class="card form-card" method="post" action="/leads/{{ lead.id }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <h2>Manage</h2>
+      <label>Status
+        <select name="status">
+          {% for key, label in statuses.items() %}<option value="{{ key }}" {{ 'selected' if key == lead.status }}>{{ label }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Tags <input type="text" name="tags" value="{{ lead.tags|join(', ') }}"></label>
+      <label>Owner (sales)
+        <select name="owner_id">
+          <option value="">No owner</option>
+          {% for u in users %}<option value="{{ u.id }}" {{ 'selected' if u.id == lead.owner_id }}>{{ u.name }}</option>{% endfor %}
+        </select>
+      </label>
+      <button class="btn btn-primary" type="submit">Save</button>
+    </form>
+    {% endif %}
+
+    <form class="card form-card" method="post" action="/leads/{{ lead.id }}/notes">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <h2>Notes</h2>
+      <textarea name="notes" rows="5">{{ lead.notes }}</textarea>
+      <button class="btn" type="submit">Save notes</button>
+    </form>
+
+    {% if can_manage %}
+    <div class="card form-card">
+      <h2>Do not contact</h2>
+      <form method="post" action="/leads/{{ lead.id }}/suppress">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button class="btn btn-danger btn-block" type="submit">Add to suppression list</button>
+      </form>
+      {% if user.role == 'admin' %}
+      <form method="post" action="/leads/{{ lead.id }}/erase"
+            onsubmit="return confirm('Delete all data for this lead? The email stays suppressed.')">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button class="btn btn-danger btn-block" type="submit">Delete lead (data deletion request)</button>
+      </form>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    {% if unsubscribe_link %}
+    <div class="card">
+      <h2>Unsubscribe link</h2>
+      <p class="muted-sm">The link this lead gets in every email (admin only, for testing).</p>
+      <a class="break" href="{{ unsubscribe_link }}" target="_blank" rel="noopener">{{ unsubscribe_link }}</a>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

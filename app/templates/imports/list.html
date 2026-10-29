@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% from "_macros.html" import import_status %}
+{% set active = "imports" %}
+{% block title %}Imports{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Imports</h1>
+    <p class="subtitle">Every uploaded lead file with its validation report</p>
+  </div>
+  <a class="btn btn-primary" href="/imports/new">Import leads</a>
+</div>
+
+<div class="card">
+  <div class="table-wrap">
+  <table class="table">
+    <thead>
+      <tr><th>File</th><th>List / source</th><th>Status</th><th>Rows</th><th>Imported</th><th>Rejected</th><th>Uploaded (IST)</th></tr>
+    </thead>
+    <tbody>
+    {% for imp in imports %}
+      <tr>
+        <td><a href="/imports/{{ imp.id }}"><strong>{{ imp.file_name }}</strong></a></td>
+        <td>{{ imp.list_name or '—' }}<div class="muted-sm">{{ source_types.get(imp.source_type, '') }}</div></td>
+        <td>{{ import_status(imp.status) }}</td>
+        <td>{{ "{:,}".format(imp.total) }}</td>
+        <td>{{ "{:,}".format(imp.imported) if imp.status == 'done' else '—' }}</td>
+        <td>
+          {% if imp.counts %}
+            {{ "{:,}".format(imp.total - imp.counts.ready) }}
+            {% if imp.total - imp.counts.ready %}· <a href="/imports/{{ imp.id }}/rejected.csv">CSV</a>{% endif %}
+          {% else %}—{% endif %}
+        </td>
+        <td class="muted">{{ imp.created_at|local }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="7" class="muted">No imports yet. <a href="/imports/new">Upload your first file.</a></td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,173 @@
+{% extends "base.html" %}
+{% from "_macros.html" import campaign_status %}
+{% set active = "campaigns" %}
+{% block title %}{{ c.name }}{% endblock %}
+{% block content %}
+<p class="crumbs"><a href="/campaigns">Campaigns</a> / {{ c.name }}</p>
+<div class="page-head">
+  <div>
+    <h1>{{ c.name }} {{ campaign_status(c.status) }}</h1>
+    <p class="subtitle">
+      {{ "Amazon SES" if c.provider == "ses" else "SMTP" }} ·
+      {{ pool|map(attribute="from_email")|join(", ") or "no sender" }}
+      {% if c.started_at %}· started {{ c.started_at|local("%d %b") }}{% endif %}
+      · {{ "{:,}".format(enrolled) }} leads (tag: {{ c.segment.get('tags', [])|join(', ') }})
+      {% if c.pause_reason %}· <strong>{{ c.pause_reason }}</strong>{% endif %}
+    </p>
+  </div>
+  <div class="head-actions">
+    {% macro action(name, label, primary=False, confirm=None) %}
+      <form method="post" action="/campaigns/{{ c.id }}/{{ name }}" class="inline" {% if confirm %}onsubmit="return confirm('{{ confirm }}')"{% endif %}>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button class="btn {{ 'btn-primary' if primary }}" type="submit">{{ label }}</button>
+      </form>
+    {% endmacro %}
+    {% if c.status == 'draft' %}{{ action('start', 'Start campaign', True, 'Start sending? Leads are enrolled now.') }}{% endif %}
+    {% if c.status in ('running', 'scheduled') %}{{ action('pause', 'Pause campaign') }}{% endif %}
+    {% if c.status == 'paused' %}{{ action('resume', 'Resume', True) }}{% endif %}
+    {% if c.status in ('running', 'scheduled', 'paused') %}{{ action('enroll', 'Add new matching leads') }}{% endif %}
+    {% if c.status in ('draft', 'paused') %}<a class="btn" href="/campaigns/{{ c.id }}/edit">Edit sequence</a>{% endif %}
+    {% if c.status not in ('completed', 'stopped', 'draft') %}{{ action('stop', 'Stop', False, 'Stop for good? All leads leave the sequence.') }}{% endif %}
+  </div>
+</div>
+
+<div class="kpis">
+  <div class="card kpi"><div class="kpi-label">Enrolled</div><div class="kpi-value">{{ "{:,}".format(enrolled) }}</div>
+    <div class="muted-sm">{{ states.get('active', 0) }} active · {{ states.get('completed', 0) }} finished</div></div>
+  <div class="card kpi"><div class="kpi-label">Emails sent</div><div class="kpi-value">{{ "{:,}".format(sent_total) }}</div>
+    <div class="muted-sm">Next: {{ next_send|local("%d %b %H:%M") if c.status == 'running' and next_send else '—' }} IST</div></div>
+  <div class="card kpi"><div class="kpi-label">Delivered</div>
+    <div class="kpi-value">{% if c.provider == 'ses' and sent_total %}{{ "%.1f"|format(100 * totals.delivery / sent_total) }}%{% else %}—{% endif %}</div>
+    <div class="muted-sm">{{ "SES delivery events" if c.provider == 'ses' else "SMTP: no delivery receipts" }}</div></div>
+  <div class="card kpi"><div class="kpi-label">Replies</div><div class="kpi-value">{{ totals.replies }}
+    {% if sent_total %}<span class="kpi-rate">{{ "%.1f"|format(100 * totals.replies / enrolled) }}%</span>{% endif %}</div>
+    <div class="muted-sm">{{ totals.positive }} interested</div></div>
+  <div class="card kpi"><div class="kpi-label">Bounced</div><div class="kpi-value">{{ totals.bounce_hard }}
+    {% if sent_total %}<span class="kpi-rate">{{ "%.1f"|format(100 * totals.bounce_hard / sent_total) }}%</span>{% endif %}</div>
+    <div class="muted-sm">{{ totals.complaint }} complaint(s)</div></div>
+  <div class="card kpi"><div class="kpi-label">Unsubscribed</div><div class="kpi-value">{{ stopped.get('unsubscribed', 0) }}
+    {% if sent_total %}<span class="kpi-rate">{{ "%.1f"|format(100 * stopped.get('unsubscribed', 0) / enrolled) }}%</span>{% endif %}</div></div>
+</div>
+
+{% if unknown %}
+<div class="banner banner-warn">
+  <strong>{{ unknown|length }} email(s) with unknown result.</strong> The connection dropped while sending, so we don't know if they went out.
+  Check the sender's Sent folder, then tell the system:
+  <table class="table table-compact">
+  {% for m in unknown %}
+    <tr>
+      <td>{{ m.to_email }} · step {{ m.step_no }} · {{ m.created_at|local }}<div class="muted-sm">{{ m.error }}</div></td>
+      <td class="actions">
+        {% for outcome, label in [('sent', 'It was sent'), ('resend', 'Not sent — send again')] %}
+        <form method="post" action="/campaigns/{{ c.id }}/messages/{{ m.id }}/resolve" class="inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="outcome" value="{{ outcome }}">
+          <button class="btn btn-sm" type="submit">{{ label }}</button>
+        </form>
+        {% endfor %}
+      </td>
+    </tr>
+  {% endfor %}
+  </table>
+</div>
+{% endif %}
+
+<div class="grid-2-1">
+  <div class="stack">
+    <h2 class="section-title">Sequence · {{ steps|length }} steps, stops on reply, bounce or unsubscribe</h2>
+    {% for st in steps %}
+      {% set t = templates.get(st.template_id) %}
+      {% set s = by_step.get(st.step_no, {"sent": 0, "failed": 0, "pending": 0, "variants": {}}) %}
+      {% if not loop.first %}
+        <div class="step-gap">wait {{ st.delay_business_days }} business days · {{ "same thread" if st.same_thread else "new thread" }}</div>
+      {% endif %}
+      <div class="card step-card {{ 'step-future' if not s.sent and not s.pending }}">
+        <div class="card-head">
+          <h2><span class="step-dot {{ 'step-dot-on' if loop.first }}">{{ st.step_no }}</span>
+            {{ "Initial email" if loop.first else "Follow-up " ~ (st.step_no - 1) }}</h2>
+          <span class="muted-sm">{{ ("Re: original subject · " if st.same_thread and not loop.first else "") }}template: <a href="/templates/{{ t.id }}">{{ t.name }}</a></span>
+        </div>
+        {% if loop.first or not st.same_thread %}
+          {% for subject in t.subject_variants %}
+            {% set letter = "ABC"[loop.index0] %}
+            <div class="variant"><span><strong>{{ letter }}</strong> · "{{ subject }}"</span>
+              <span class="muted-sm">{{ s.variants.get(letter, 0) }} sent ·
+                {% set vr = variant_replies.get(letter, 0) %}<strong>{{ "%.1f"|format(100 * vr / s.variants[letter]) if s.variants.get(letter) else "0.0" }}% reply rate</strong></span></div>
+          {% endfor %}
+        {% endif %}
+        <div class="step-stats">
+          <div><div class="muted-sm">Sent</div><strong>{{ s.sent }}</strong></div>
+          <div><div class="muted-sm">Delivered</div><strong>{{ events.get(st.step_no, {}).get('delivery', '—') if c.provider == 'ses' else '—' }}</strong></div>
+          <div><div class="muted-sm">Bounced</div><strong>{{ events.get(st.step_no, {}).get('bounce_hard', 0) }}</strong></div>
+          <div><div class="muted-sm">Replies</div><strong>{{ replies.get(st.step_no, {}).get('all', 0) }}</strong></div>
+        </div>
+      </div>
+    {% else %}
+      <div class="card"><p class="muted">No steps yet. <a href="/campaigns/{{ c.id }}/edit">Edit the sequence.</a></p></div>
+    {% endfor %}
+
+    <div class="card">
+      <h2>Recent sends</h2>
+      <div class="table-wrap">
+      <table class="table table-compact">
+        <thead><tr><th>To</th><th>Step</th><th>Subject</th><th>Status</th><th>When (IST)</th></tr></thead>
+        <tbody>
+        {% for m, email in recent %}
+          {% set colors = {"sent": "green", "sending": "blue", "retry": "amber", "failed": "red", "unknown": "amber"} %}
+          <tr>
+            <td>{{ email }}</td><td>{{ m.step_no }}{{ m.variant if m.step_no == 1 }}</td><td>{{ m.subject|truncate(50) }}</td>
+            <td><span class="badge badge-{{ colors.get(m.status, 'grey') }}">{{ m.status }}</span>
+              {% if m.error %}<div class="muted-sm">{{ m.error|truncate(80) }}</div>{% endif %}</td>
+            <td class="muted">{{ (m.sent_at or m.created_at)|local("%d %b %H:%M") }}</td>
+          </tr>
+        {% else %}
+          <tr><td colspan="5" class="muted">Nothing sent yet.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="stack">
+    <div class="card">
+      <h2>Schedule</h2>
+      <dl class="kv">
+        <dt>Send window</dt><dd>{% for a, b in c.schedule.windows %}{{ a }}–{{ b }}{{ ", " if not loop.last }}{% endfor %}<div class="muted-sm">lead's local time</div></dd>
+        <dt>Days</dt><dd>{% for d in c.schedule.weekdays %}{{ weekdays[d] }}{{ ", " if not loop.last }}{% endfor %}</dd>
+        <dt>Skip</dt><dd>US public holidays</dd>
+        <dt>Daily cap</dt><dd>{{ c.daily_cap }} <span class="muted-sm">(and each sender's warm-up cap)</span></dd>
+        <dt>Gap between sends</dt><dd>{% for s in pool %}{{ s.gap_min_sec }}–{{ s.gap_max_sec }} s{{ ", " if not loop.last }}{% endfor %}</dd>
+        <dt>Per company domain</dt><dd>max {{ domain_max }} / day</dd>
+        {% if c.start_at %}<dt>Starts</dt><dd>{{ c.start_at|local("%d %b %Y") }}</dd>{% endif %}
+      </dl>
+    </div>
+
+    <div class="card">
+      <h2>Stop rules</h2>
+      <ul class="checklist">
+        <li class="on">Stop lead on any reply, bounce, complaint or unsubscribe</li>
+        <li class="{{ 'on' if c.stop_company_on_reply else 'off' }}">Stop whole company on reply</li>
+        <li class="on">Ignore out-of-office replies</li>
+        <li class="on">Auto-pause at 3% bounce / 0.1% complaints</li>
+      </ul>
+      <p class="muted-sm">Now: {{ "%.1f"|format(health.bounce_pct) }}% bounce, {{ "%.2f"|format(health.complaint_pct) }}% complaints
+        over the last {{ health.sends }} sends{% if c.health_since %} since resume{% endif %}.</p>
+    </div>
+
+    <div class="card">
+      <h2>{{ "Pre-launch check" if c.status == 'draft' else "Compliance check" }}</h2>
+      <dl class="kv kv-wide">
+        {% for label, ok, detail in checks %}
+          <dt>{{ label }}<div class="muted-sm">{{ detail }}</div></dt>
+          <dd><span class="badge badge-{{ 'green' if ok else 'red' }}">{{ "Pass" if ok else "Fix" }}</span></dd>
+        {% endfor %}
+      </dl>
+      {% if summary and summary.excluded %}
+        <p class="muted-sm">{{ "{:,}".format(summary.matching) }} new leads match the tags.
+          Not enrolled: {% for name, n in summary.excluded.items() if n %}{{ n }} {{ name }}{{ ", " if not loop.last }}{% else %}none{% endfor %}.</p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

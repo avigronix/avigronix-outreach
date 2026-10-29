@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% set active = "replies" %}
+{% block title %}Replies{% endblock %}
+{% block content %}
+{% set labels = {"reply": None, "auto_reply": ("Auto-reply", "grey"), "unsubscribe_request": ("Unsubscribe request", "red")} %}
+{% set outcome_colors = {"interested": "green", "meeting_booked": "green", "not_interested": "grey",
+                         "wrong_person": "grey", "unsubscribe_request": "red"} %}
+{% macro badge(r) -%}
+  {% if r.outcome %}<span class="badge badge-{{ outcome_colors[r.outcome] }}">{{ outcomes[r.outcome] }}</span>
+  {% elif labels[r.classification] %}<span class="badge badge-{{ labels[r.classification][1] }}">{{ labels[r.classification][0] }}</span>
+  {% else %}<span class="badge badge-blue">New reply</span>{% endif %}
+{%- endmacro %}
+{% macro ago(when) -%}
+  {%- set mins = ((now - when).total_seconds() // 60)|int -%}
+  {{ "%dm"|format(mins) if mins < 60 else "%dh"|format(mins // 60) if mins < 1440 else "%dd"|format(mins // 1440) }}
+{%- endmacro %}
+
+<div class="page-head">
+  <div>
+    <h1>Replies</h1>
+    <p class="subtitle">Synced from the reply mailboxes every 3 minutes</p>
+  </div>
+  <div class="pills">
+    {% for key, label in tabs.items() %}
+      <a class="pill {{ 'pill-on' if key == tab }}" href="/replies?tab={{ key }}">{{ label }} · {{ counts[key] }}</a>
+    {% endfor %}
+  </div>
+</div>
+
+{% if not rows %}
+  <div class="card"><p class="muted">Nothing here. Replies show up within a few minutes of arriving.</p></div>
+{% else %}
+<div class="inbox">
+  <div class="card inbox-list">
+    {% for r, l in rows %}
+      <a class="inbox-item {{ 'inbox-item-on' if selected and r.id == selected.id }}" href="/replies?tab={{ tab }}&id={{ r.id }}">
+        <div class="inbox-top"><strong>{{ (l.first_name ~ " " ~ l.last_name).strip() or r.from_email }}</strong>
+          <span class="muted-sm">{{ ago(r.received_at) }}</span></div>
+        <div class="muted-sm">{{ [l.company, l.city, l.state or l.country]|select|join(" · ") }}</div>
+        <div class="inbox-snippet">{{ r.body_text|truncate(60) }}</div>
+        {{ badge(r) }}
+      </a>
+    {% endfor %}
+  </div>
+
+  {% if selected %}
+  <div class="card inbox-thread">
+    <div class="muted-sm">{{ campaign.name if campaign else "" }}{% if message %} · Step {{ message.step_no }}{{ " (follow-up %d)"|format(message.step_no - 1) if message.step_no > 1 }}{% endif %}</div>
+    <h2 class="thread-subject">{{ selected.subject }}</h2>
+    {% for direction, when, item in thread %}
+      <div class="mail {{ 'mail-in' if direction == 'in' else 'mail-out' }} {{ 'mail-on' if item is sameas selected }}">
+        <div class="mail-head">
+          {% if direction == 'sequence' %}<span><strong>You</strong> · <span class="muted-sm">step {{ item.step_no }}</span></span>
+          {% elif direction == 'out' %}<span><strong>You</strong> · <span class="muted-sm">reply by {{ senders_by_user.get(item.sent_by, '') }} from {{ item.from_email }}</span></span>
+          {% else %}<span><strong>{{ item.from_name or lead.first_name }}</strong> · <span class="muted-sm">{{ item.from_email }}</span>
+            {% if item.classification == 'auto_reply' %}<span class="badge badge-grey">auto-reply</span>{% endif %}</span>{% endif %}
+          <span class="muted-sm">{{ when|local("%d %b, %H:%M") }} IST</span>
+        </div>
+        <div class="mail-body">{{ (item.body_text.split("\n--\n")[0] if direction == 'sequence' else item.body_text) }}</div>
+      </div>
+    {% endfor %}
+    {% if enrollment and enrollment.state == 'stopped' and enrollment.stop_reason == 'replied' %}
+      <div class="flash flash-ok">Sequence stopped for this lead{% if company_stopped %} · {{ company_stopped }} other lead(s) at {{ lead.domain }} also stopped{% endif %}</div>
+    {% endif %}
+    {% if reply_sender %}
+    <form method="post" action="/replies/{{ selected.id }}/send" class="reply-box">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="tab" value="{{ tab }}">
+      <label>Reply from {{ reply_sender.from_email }} to {{ selected.from_email }}
+        <textarea name="body" rows="6" placeholder="Hi {{ lead.first_name or 'there' }}, thanks for getting back…">{{ selected.draft }}</textarea>
+      </label>
+      <p class="muted-sm">Same thread, sent through {{ "Amazon SES" if reply_sender.type == "ses" else "the SMTP mailbox" }}.
+        Their message is quoted below yours, the footer is added, and the reply mailbox gets a copy (BCC).
+        {% if reply_sender.status != 'active' %}<strong>Note: this sender is {{ reply_sender.status }} for campaigns.</strong>{% endif %}</p>
+      <div class="reply-actions">
+        <button class="btn" type="submit" name="action" value="draft">Save draft</button>
+        <button class="btn btn-primary" type="submit" name="action" value="send">Send reply</button>
+      </div>
+    </form>
+    {% else %}
+    <p class="muted-sm">The original email is no longer stored, so reply from the mailbox in Zoho.</p>
+    {% endif %}
+  </div>
+
+  <div class="stack inbox-side">
+    <div class="card">
+      <h2 class="lead-name"><a href="/leads/{{ lead.id }}">{{ (lead.first_name ~ " " ~ lead.last_name).strip() or lead.email }}</a></h2>
+      <div class="muted-sm">{{ [lead.title, lead.company]|select|join(" · ") }}</div>
+      <dl class="kv">
+        <dt>Local time</dt><dd>{{ lead_local or "unknown" }}</dd>
+        <dt>Website</dt><dd>{% if lead.website %}<a href="https://{{ lead.website.replace('https://', '').replace('http://', '') }}" target="_blank" rel="noopener">{{ lead.website }}</a>{% else %}—{% endif %}</dd>
+        <dt>Source</dt><dd>{{ source_types.get(lead.source_type, lead.source_type) }}</dd>
+        <dt>Emails received</dt><dd>{{ sent_count }}{{ " of %d"|format(steps_total) if steps_total }}</dd>
+      </dl>
+    </div>
+    <div class="card form-card">
+      <h2>Outcome</h2>
+      <div class="outcome-grid">
+        {% for key, label in outcomes.items() %}
+        <form method="post" action="/replies/{{ selected.id }}/outcome">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="outcome" value="{{ key }}">
+          <input type="hidden" name="tab" value="{{ tab }}">
+          <button type="submit" class="outcome {{ 'outcome-on' if selected.outcome == key }} {{ 'outcome-danger' if key == 'unsubscribe_request' }}">{{ label }}</button>
+        </form>
+        {% endfor %}
+      </div>
+      <form method="post" action="/replies/{{ selected.id }}/assign">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="tab" value="{{ tab }}">
+        <label>Assigned to
+          <select name="user_id" onchange="this.form.submit()">
+            <option value="">Nobody</option>
+            {% for u in users %}<option value="{{ u.id }}" {{ 'selected' if u.id == selected.assigned_to }}>{{ u.name }}</option>{% endfor %}
+          </select>
+        </label>
+      </form>
+      <form method="post" action="/replies/{{ selected.id }}/suppress">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="tab" value="{{ tab }}">
+        <button class="btn btn-danger btn-block" type="submit">Add to suppression list</button>
+      </form>
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% from "_macros.html" import import_steps %}
+{% set active = "imports" %}
+{% block title %}Map columns{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Import leads</h1>
+    <p class="subtitle">{{ imp.file_name }} · {{ "{:,}".format(imp.total) }} rows · {{ imp.headers|length }} columns</p>
+  </div>
+</div>
+{{ import_steps(2) }}
+
+<form method="post" action="/imports/{{ imp.id }}/map" class="grid-2-1">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <div class="card">
+    <div class="card-head">
+      <h2>Match your file's columns to lead fields</h2>
+      <span class="muted-sm">{{ matched }} of {{ imp.headers|length }} matched automatically</span>
+    </div>
+    <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Column in file</th><th>Sample value</th><th>Maps to</th></tr></thead>
+      <tbody>
+      {% for header in imp.headers %}
+        {% set chosen = imp.column_map.get(loop.index0|string, "") %}
+        <tr class="{{ 'row-warn' if not chosen }}">
+          <td><strong>{{ header }}</strong></td>
+          <td class="muted">{{ samples[loop.index0]|truncate(40) }}</td>
+          <td>
+            <select name="map_{{ loop.index0 }}">
+              <option value="">Choose a field… (skip)</option>
+              {% for key, label in fields.items() %}
+                <option value="{{ key }}" {{ 'selected' if key == chosen }}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    <p class="muted-sm">"Custom field" keeps the value under the column's name, usable in templates as a merge field.</p>
+  </div>
+
+  <div class="stack">
+    <div class="card form-card">
+      <h2>Where did these leads come from?</h2>
+      <label>Source type (required)
+        <select name="source_type" required>
+          <option value="">Choose…</option>
+          {% for key, label in source_types.items() %}
+            <option value="{{ key }}" {{ 'selected' if key == imp.source_type }}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>List name
+        <input type="text" name="list_name" value="{{ imp.list_name or '' }}" placeholder="US dental clinics · Oct 2026">
+      </label>
+      <label>Tags for these leads <span class="muted-sm">(comma separated, used to pick campaign segments)</span>
+        <input type="text" name="tags" value="{{ imp.tags|join(', ') }}" placeholder="us-dental">
+      </label>
+      <p class="muted-sm">Purchased lists can only use the SMTP mailbox senders.</p>
+    </div>
+    {% if imp.error %}<div class="flash flash-error">Last attempt failed: {{ imp.error }}</div>{% endif %}
+    <div class="row-2">
+      <a class="btn" href="/imports">Back</a>
+      <button class="btn btn-primary" type="submit">Validate {{ "{:,}".format(imp.total) }} rows</button>
+    </div>
+  </div>
+</form>
+{% endblock %}

@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% from "_macros.html" import campaign_status %}
+{% set active = "reports" %}
+{% block title %}Reports{% endblock %}
+{% macro stat_row(label, st, extra="") -%}
+  <tr>
+    <td><strong>{{ label }}</strong>{% if extra %}<div class="muted-sm">{{ extra }}</div>{% endif %}</td>
+    {% for key, _ in columns %}
+      <td class="{{ 'text-red' if (key == 'bounces' and bounce_level(st.bounces_pct) == 'red') or (key == 'complaints' and complaint_level(st.complaints_pct) == 'red') }}">
+        {{ "{:,}".format(st[key]) }}{% if key != 'sends' and st.sends %} <span class="muted-sm">{{ "%.1f"|format(st[key ~ '_pct']) }}%</span>{% endif %}
+      </td>
+    {% endfor %}
+  </tr>
+{%- endmacro %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Reports</h1>
+    <p class="subtitle">Rates are per email sent. Delivered comes from SES only; SMTP mailboxes don't report deliveries.</p>
+  </div>
+  <div class="head-actions">
+    <a class="btn" href="/reports/campaigns.csv">Campaigns CSV</a>
+    <a class="btn" href="/reports/senders.csv">Sender health CSV</a>
+  </div>
+</div>
+
+<div class="card section">
+  <h2>All campaigns</h2>
+  <div class="table-wrap">
+  <table class="table table-compact">
+    <thead><tr><th>Campaign</th>{% for _, label in columns %}<th>{{ label }}</th>{% endfor %}</tr></thead>
+    <tbody>
+    {% for r in rows %}
+      {{ stat_row(r.c.name, r.stats, r.c.provider|upper ~ " · " ~ r.c.status) }}
+    {% else %}
+      <tr><td colspan="8" class="muted">No campaigns started yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+
+{% if selected %}
+<div class="card section">
+  <div class="card-head">
+    <form method="get" class="inline">
+      <select name="campaign_id" onchange="this.form.submit()">
+        {% for r in rows %}<option value="{{ r.c.id }}" {{ 'selected' if r.c.id == selected.id }}>{{ r.c.name }}</option>{% endfor %}
+      </select>
+    </form>
+    <a class="btn btn-sm" href="/reports/campaign/{{ selected.id }}.csv">Export CSV</a>
+  </div>
+  <div class="table-wrap">
+  <table class="table table-compact">
+    <thead><tr><th></th>{% for _, label in columns %}<th>{{ label }}</th>{% endfor %}</tr></thead>
+    <tbody>
+      {{ stat_row("Total", report.total) }}
+      {% for st, stats in report.steps %}{{ stat_row("Step %d"|format(st.step_no), stats, "initial email" if st.step_no == 1 else "follow-up, +%d business days"|format(st.delay_business_days)) }}{% endfor %}
+      {% for v, stats in report.variants %}{{ stat_row("Subject " ~ v, stats, "whole thread started with this subject") }}{% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endif %}
+
+<div class="card section">
+  <h2>Sender health · last {{ senders[0][2]|length if senders else 14 }} business days</h2>
+  {% for s, cap, days in senders %}
+    {% set peak = [cap] + days|map(attribute=1)|list %}
+    <div class="sender-health">
+      <div><strong>{{ s.from_email }}</strong> <span class="muted-sm">{{ s.type|upper }} · warm-up day {{ s.warmup_day }} · cap {{ cap }}/day · {{ s.status }}</span></div>
+      <div class="mini-chart">
+        {% for day, sent, bounces, complaints in days %}
+          <div class="mini-col" title="{{ day }}: {{ sent }} sent, {{ bounces }} bounced, {{ complaints }} complaints">
+            <div class="mini-bar {{ 'mini-bar-bad' if bounces or complaints }}" style="height: {{ 100 * sent / (peak|max or 1) }}%"></div>
+          </div>
+        {% endfor %}
+      </div>
+      <div class="muted-sm">{{ days|map(attribute=1)|sum }} sent · {{ days|map(attribute=2)|sum }} bounced · {{ days|map(attribute=3)|sum }} complaints (red bars: days with bounces or complaints)</div>
+    </div>
+  {% else %}
+    <p class="muted">No senders.</p>
+  {% endfor %}
+</div>
+{% endblock %}
