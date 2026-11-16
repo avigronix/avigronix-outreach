@@ -1,0 +1,67 @@
+{# Swapped in place by HTMX every 2 s while the worker is busy. #}
+<div id="import-progress"
+     {% if imp.status in ('validating', 'importing') %}
+     hx-get="/imports/{{ imp.id }}/progress" hx-trigger="every 2s" hx-swap="outerHTML"
+     {% endif %}>
+{% set c = imp.counts %}
+
+{% if imp.status == 'validating' %}
+  <div class="card narrow">
+    <h2>Validating {{ "{:,}".format(imp.total) }} rows…</h2>
+    <p class="muted">Checking email syntax, duplicates, the suppression list and each domain's MX record.
+      Large files with many domains can take a few minutes. You can leave this page.</p>
+    <div class="progress"><div class="progress-bar progress-indeterminate"></div></div>
+  </div>
+
+{% elif imp.status == 'failed' %}
+  <div class="card narrow">
+    <h2>Import failed</h2>
+    <div class="flash flash-error">{{ imp.error }}</div>
+    <a class="btn" href="/imports/{{ imp.id }}/map">Back to column mapping</a>
+  </div>
+
+{% else %}
+  <div class="grid-1-1">
+    <div class="card">
+      <h2>Validation result</h2>
+      <dl class="kv">
+        <dt>Ready to import</dt><dd class="good">{{ "{:,}".format(c.ready) }}</dd>
+        <dt>Duplicates (file or database)</dt><dd>{{ "{:,}".format(c.duplicates) }}</dd>
+        <dt>Already on suppression list</dt><dd>{{ "{:,}".format(c.suppressed) }}</dd>
+        <dt>Invalid, disposable or no MX record</dt><dd class="bad">{{ "{:,}".format(c.invalid) }}</dd>
+        <dt>Role addresses (info@, office@) — imported, flagged</dt><dd class="warn">{{ "{:,}".format(c.role) }} flagged</dd>
+        <dt>Free-mail (gmail, yahoo…) — imported, flagged</dt><dd class="warn">{{ "{:,}".format(c.free_mail) }} flagged</dd>
+        <dt>Timezone found</dt>
+        <dd>{{ "%.1f"|format(100 * c.tz_found / c.ready) if c.ready else "0.0" }}%</dd>
+      </dl>
+      {% if imp.total - c.ready %}
+        <a href="/imports/{{ imp.id }}/rejected.csv">Download rejected rows (CSV)</a>
+      {% endif %}
+    </div>
+
+    <div class="card">
+      {% if imp.status == 'validated' %}
+        <h2>Confirm import</h2>
+        <p class="muted">{{ "{:,}".format(c.ready) }} new leads will be added with status "New"
+          {% if imp.tags %}and tags {{ imp.tags|join(', ') }}{% endif %}. Rejected rows are not imported.</p>
+        <div class="row-2">
+          <a class="btn" href="/imports/{{ imp.id }}/map">Back</a>
+          <form method="post" action="/imports/{{ imp.id }}/confirm">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button class="btn btn-primary btn-block" type="submit" {{ 'disabled' if not c.ready }}>Import {{ "{:,}".format(c.ready) }} leads</button>
+          </form>
+        </div>
+      {% elif imp.status == 'importing' %}
+        <h2>Importing…</h2>
+        <p class="muted">{{ "{:,}".format(imp.processed) }} of {{ "{:,}".format(c.ready) }} leads added.</p>
+        <div class="progress"><div class="progress-bar" style="width: {{ (100 * imp.processed / c.ready) if c.ready else 100 }}%"></div></div>
+      {% elif imp.status == 'done' %}
+        <h2>Import finished</h2>
+        <p><span class="badge badge-green">{{ "{:,}".format(imp.imported) }} leads imported</span></p>
+        <p class="muted">Finished {{ imp.finished_at|local }} IST.</p>
+        <a class="btn btn-primary" href="/leads?import_id={{ imp.id }}">View these leads</a>
+      {% endif %}
+    </div>
+  </div>
+{% endif %}
+</div>

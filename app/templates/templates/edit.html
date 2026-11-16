@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% set active = "templates" %}
+{% block title %}{{ t.name if t else "New template" }}{% endblock %}
+{% block content %}
+<p class="crumbs"><a href="/templates">Templates</a> / {{ t.name if t else "New" }}</p>
+<div class="page-head">
+  <div>
+    <h1>{{ t.name if t else "New template" }}</h1>
+    <p class="subtitle">Merge fields: <code>{{ '{{first_name}}' }}</code> <code>{{ '{{company}}' }}</code> <code>{{ '{{title}}' }}</code>
+      <code>{{ '{{city}}' }}</code> <code>{{ '{{sender_name}}' }}</code>, any custom field, and fallbacks like <code>{{ '{{first_name|there}}' }}</code></p>
+  </div>
+</div>
+
+<div class="grid-1-1">
+  <form id="tpl-form" class="card form-card" method="post" action="{{ '/templates/%d'|format(t.id) if t else '/templates' }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="lead_id" value="{{ lead_id }}">
+    <label>Template name <input type="text" name="name" value="{{ t.name if t else '' }}" required placeholder="dental-intro"></label>
+    <label>Subject A (required) <input type="text" name="subject_a" value="{{ subjects[0] }}" required></label>
+    <label>Subject B <span class="muted-sm">(optional A/B test — rotated evenly)</span><input type="text" name="subject_b" value="{{ subjects[1] }}"></label>
+    <label>Subject C <input type="text" name="subject_c" value="{{ subjects[2] }}"></label>
+    <label>Body (plain text) <span class="muted-sm">50–150 words, one call to action, 1–2 links at most</span>
+      <textarea name="body_text" rows="14">{{ t.body_text if t else '' }}</textarea>
+    </label>
+    <details {{ 'open' if t and t.body_html }}>
+      <summary class="muted">Optional HTML version</summary>
+      <textarea name="body_html" rows="8" placeholder="Leave empty to send plain text only (recommended)">{{ t.body_html if t else '' }}</textarea>
+    </details>
+    <div class="row-2">
+      <button class="btn btn-primary" type="submit">Save template</button>
+      {% if t %}
+      <button class="btn btn-danger" type="submit" form="delete-form">Delete</button>
+      {% endif %}
+    </div>
+  </form>
+  {% if t %}
+  <form id="delete-form" method="post" action="/templates/{{ t.id }}/delete" onsubmit="return confirm('Delete this template?')">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  </form>
+  {% endif %}
+
+  <div class="stack">
+    <div class="card">
+      <div class="card-head">
+        <h2>Preview</h2>
+        <form method="get" class="inline">
+          <select name="lead_id" onchange="this.form.submit()">
+            <option value="">Sample lead (Jason, BrightSmile Dental)</option>
+            {% for l in leads %}
+              <option value="{{ l.id }}" {{ 'selected' if l.id|string == lead_id }}>{{ l.first_name or l.email }} · {{ l.company }}</option>
+            {% endfor %}
+          </select>
+        </form>
+      </div>
+      <div id="preview"
+           hx-post="/templates/preview" hx-include="#tpl-form"
+           hx-trigger="input from:#tpl-form delay:600ms">
+        {% include "templates/_preview.html" %}
+      </div>
+    </div>
+
+    {% if t %}
+    <form class="card form-card" method="post" action="/templates/{{ t.id }}/test">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="lead_id" value="{{ lead_id }}">
+      <h2>Send test email</h2>
+      <p class="muted-sm">Sends the saved version, one email per subject variant, merged with the lead chosen in the preview.
+        {% if t.test_sent_at %}Last test: {{ t.test_sent_at|local }} IST.{% endif %}</p>
+      {% if senders %}
+      <div class="row-2">
+        <label>From
+          <select name="sender_id">{% for s in senders %}<option value="{{ s.id }}">{{ s.from_email }} ({{ s.type|upper }})</option>{% endfor %}</select>
+        </label>
+        <label>To (internal address) <input type="email" name="to_email" value="{{ user.email }}" required></label>
+      </div>
+      <button class="btn" type="submit">Send test</button>
+      {% else %}
+      <p class="muted">Add a sender first (Senders page, admin).</p>
+      {% endif %}
+    </form>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

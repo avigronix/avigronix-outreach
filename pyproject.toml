@@ -1,0 +1,6 @@
+# Project metadata only. Dependencies are pinned in requirements.txt (pip install -r requirements.txt).
+[project]
+name = "avigronix-outreach"
+version = "1.0.0"
+description = "Internal B2B email outreach dashboard for Avigronix Technologies"
+requires-python = ">=3.10"

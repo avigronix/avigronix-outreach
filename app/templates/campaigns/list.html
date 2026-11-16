@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% from "_macros.html" import campaign_status %}
+{% set active = "campaigns" %}
+{% block title %}Campaigns{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Campaigns</h1>
+    <p class="subtitle">A lead segment + a sequence + a sender pool. Sends follow each lead's local time.</p>
+  </div>
+  <a class="btn btn-primary" href="/campaigns/new">New campaign</a>
+</div>
+
+<div class="card">
+  <div class="table-wrap">
+  <table class="table">
+    <thead><tr><th>Campaign</th><th>Provider</th><th>Status</th><th>Leads</th><th>Sent</th><th>Next send (IST)</th></tr></thead>
+    <tbody>
+    {% for c in campaigns %}
+      <tr>
+        <td><a href="/campaigns/{{ c.id }}"><strong>{{ c.name }}</strong></a>
+          <div class="muted-sm">tags: {{ c.segment.get('tags', [])|join(', ') }}</div></td>
+        <td>{{ c.provider|upper }}</td>
+        <td>{{ campaign_status(c.status) }}</td>
+        <td>{{ "{:,}".format(stats[c.id].enrolled) }}</td>
+        <td>{{ "{:,}".format(stats[c.id].sent) }}</td>
+        <td class="muted">
+          {% if c.status == 'scheduled' and c.start_at %}Starts {{ c.start_at|local("%d %b") }}
+          {% elif c.status == 'running' %}{{ stats[c.id].next|local }}
+          {% else %}—{% endif %}
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="6" class="muted">No campaigns yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,17 @@
+{% if no_address %}
+  <div class="flash flash-error">No postal address yet — required in every email (CAN-SPAM). Add it on the Settings page.</div>
+{% endif %}
+{% if missing %}
+  <div class="flash flash-error">Empty for this lead with no fallback: {{ missing|join(', ') }}.
+    Add a fallback like <code>{{ '{{' ~ missing[0] ~ '|there}}' }}</code>.</div>
+{% endif %}
+{% for w in warnings %}
+  <div class="lint">⚠ {{ w }}</div>
+{% endfor %}
+
+{% for p in previews %}
+  <div class="email-preview">
+    <div class="email-subject"><span class="muted">{{ "ABC"[loop.index0] }} ·</span> {{ p.subject or "(no subject)" }}</div>
+    <pre class="email-body">{{ p.text }}</pre>
+  </div>
+{% endfor %}

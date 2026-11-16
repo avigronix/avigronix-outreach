@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% set active = "templates" %}
+{% block title %}Templates{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Templates</h1>
+    <p class="subtitle">Plain-text emails with merge fields. The footer (company, postal address, unsubscribe link) is added automatically.</p>
+  </div>
+  <a class="btn btn-primary" href="/templates/new">New template</a>
+</div>
+
+<div class="card">
+  <div class="table-wrap">
+  <table class="table">
+    <thead><tr><th>Name</th><th>Subjects</th><th>Words</th><th>Test sent</th><th>Updated (IST)</th></tr></thead>
+    <tbody>
+    {% for t in templates %}
+      <tr>
+        <td><a href="/templates/{{ t.id }}"><strong>{{ t.name }}</strong></a></td>
+        <td>
+          {% for s in t.subject_variants %}<div><span class="muted">{{ "ABC"[loop.index0] }} ·</span> {{ s }}</div>{% endfor %}
+        </td>
+        <td>{{ t.body_text.split()|length }}</td>
+        <td>{% if t.test_sent_at %}<span class="badge badge-green">{{ t.test_sent_at|local("%d %b") }}</span>{% else %}<span class="badge badge-grey">Not yet</span>{% endif %}</td>
+        <td class="muted">{{ t.updated_at|local }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5" class="muted">No templates yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endblock %}

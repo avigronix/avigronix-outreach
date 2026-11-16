@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% set active = "campaigns" %}
+{% block title %}{{ c.name if c else "New campaign" }}{% endblock %}
+{% block content %}
+<p class="crumbs"><a href="/campaigns">Campaigns</a> / {{ c.name if c else "New" }}</p>
+<div class="page-head">
+  <div>
+    <h1>{{ "Edit " ~ c.name if c else "New campaign" }}</h1>
+    <p class="subtitle">Saved as a draft. Nothing is sent until you start it.</p>
+  </div>
+</div>
+
+<form method="post" action="{{ '/campaigns/%d/edit'|format(c.id) if c else '/campaigns' }}" class="grid-1-1">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <div class="stack">
+    <div class="card form-card">
+      <h2>Basics</h2>
+      <label>Name <input type="text" name="name" value="{{ c.name if c else '' }}" placeholder="US Dental Clinics — Website Revamp" required></label>
+      <label>Sending provider
+        {% if c and c.status != 'draft' %}
+          <input type="text" value="{{ c.provider|upper }}" disabled><input type="hidden" name="provider" value="{{ c.provider }}">
+        {% else %}
+        <select name="provider">
+          <option value="ses" {{ 'selected' if c and c.provider == 'ses' }}>Amazon SES (opt-in, clients, inquiries)</option>
+          <option value="smtp" {{ 'selected' if c and c.provider == 'smtp' }}>SMTP mailboxes (purchased / compiled lists)</option>
+        </select>
+        {% endif %}
+      </label>
+      <div>
+        <div class="label-text">Sender pool <span class="muted-sm">(same type as the provider)</span></div>
+        {% for s in senders %}
+          <label class="check"><input type="checkbox" name="sender_ids" value="{{ s.id }}" {{ 'checked' if s.id in pool_ids }}>
+            {{ s.from_email }} <span class="muted-sm">{{ s.type|upper }}{{ ' · ' ~ s.status if s.status != 'active' }}</span></label>
+        {% else %}
+          <p class="muted">No senders yet — an admin adds them on the Senders page.</p>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="card form-card">
+      <h2>Segment</h2>
+      <label>Lead tags <span class="muted-sm">(leads with any of these tags and status New)</span>
+        <input type="text" name="tags" value="{{ c.segment.get('tags', [])|join(', ') if c else '' }}" placeholder="us-dental" required></label>
+      <label>Countries <span class="muted-sm">(optional, e.g. US, GB — empty = all)</span>
+        <input type="text" name="countries" value="{{ c.segment.get('countries', [])|join(', ') if c else '' }}"></label>
+      <label class="check"><input type="checkbox" name="allow_canada" value="1" {{ 'checked' if c and c.allow_canada }}>
+        Include Canadian leads <span class="muted-sm">(CASL — only with consent)</span></label>
+    </div>
+
+    <div class="card form-card">
+      <h2>Schedule</h2>
+      <label>Send windows, lead's local time <input type="text" name="windows" value="{{ windows }}" required></label>
+      <div>
+        <div class="label-text">Days</div>
+        <div class="weekday-row">
+        {% for d in weekdays %}
+          <label class="check"><input type="checkbox" name="weekdays" value="{{ loop.index0 }}" {{ 'checked' if loop.index0 in schedule.weekdays }}> {{ d }}</label>
+        {% endfor %}
+        </div>
+        <p class="muted-sm">US public holidays are always skipped.</p>
+      </div>
+      <div class="row-2">
+        <label>Timezone when a lead has none <input type="text" name="default_tz" value="{{ schedule.default_tz }}"></label>
+        <label>Campaign daily cap <input type="number" name="daily_cap" value="{{ c.daily_cap if c else 400 }}" min="1" max="10000"></label>
+      </div>
+      <label>Start on <span class="muted-sm">(optional; empty = as soon as you press Start)</span>
+        <input type="date" name="start_date" value="{{ c.start_at|local('%Y-%m-%d') if c and c.start_at else '' }}"></label>
+      <label class="check"><input type="checkbox" name="stop_company_on_reply" value="1" {{ 'checked' if not c or c.stop_company_on_reply }}>
+        Stop the whole company when anyone there replies</label>
+    </div>
+  </div>
+
+  <div class="stack">
+    <div class="card form-card">
+      <h2>Sequence</h2>
+      <p class="muted-sm">Initial email + up to 4 follow-ups. Delays are business days after the previous step. "Same thread" sends it as a reply ("Re: …").</p>
+      {% for n in range(1, max_steps + 1) %}
+        {% set st = steps.get(n) %}
+        <div class="step-row">
+          <div class="step-num">{{ n }}</div>
+          <div class="step-fields">
+            <label>{{ "Initial email" if n == 1 else "Follow-up " ~ (n - 1) }}{% if n in locked_steps %} <span class="badge badge-grey">already sent — can't remove</span>{% endif %}
+              <select name="step_{{ n }}_template">
+                <option value="">{{ "Choose a template" if n == 1 else "— not used —" }}</option>
+                {% for t in templates %}<option value="{{ t.id }}" {{ 'selected' if st and st.template_id == t.id }}>{{ t.name }}</option>{% endfor %}
+              </select>
+            </label>
+            {% if n > 1 %}
+            <div class="row-2">
+              <label>Wait (business days) <input type="number" name="step_{{ n }}_delay" min="1" value="{{ st.delay_business_days if st else [3, 5, 7, 7][n - 2] }}"></label>
+              <label class="check"><input type="checkbox" name="step_{{ n }}_same_thread" value="1" {{ 'checked' if not st or st.same_thread }}> Same thread</label>
+            </div>
+            {% endif %}
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+    <button class="btn btn-primary" type="submit">Save campaign</button>
+  </div>
+</form>
+{% endblock %}

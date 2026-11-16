@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+{% from "_macros.html" import campaign_status %}
+{% set active = "dashboard" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+{% set labels = {"auto_reply": ("Auto-reply", "grey"), "unsubscribe_request": ("Unsubscribe request", "red"), "reply": ("New reply", "blue")} %}
+<div class="page-head">
+  <div>
+    <h1>Dashboard</h1>
+    <p class="subtitle">{{ now|local("%A, %d %b %Y") }} · times shown in IST, sends follow each lead's local time</p>
+  </div>
+  {% if user.role in ('admin', 'manager') %}
+  <div class="head-actions">
+    <a class="btn" href="/imports/new">Import leads</a>
+    <a class="btn btn-primary" href="/campaigns/new">New campaign</a>
+  </div>
+  {% endif %}
+</div>
+
+{% for url, name, reason in auto_paused %}
+<div class="banner banner-warn">
+  <strong>{{ name }}</strong> — {{ reason }}. Clean the list before resuming.
+  {% if user.role in ('admin', 'manager') %}<a href="{{ url }}">Review</a>{% endif %}
+</div>
+{% endfor %}
+{% if not worker_ok %}
+<div class="banner banner-warn">
+  <strong>Worker not running:</strong> last heartbeat {{ heartbeat|local }} IST. No emails are sent until it is back
+  (<code>systemctl status outreach-worker</code>). The admin has been emailed.
+</div>
+{% endif %}
+
+{% if user.role in ('admin', 'manager') %}
+<div class="kpis">
+  <div class="card kpi">
+    <div class="kpi-label">Sent today</div>
+    <div class="kpi-value">{{ "{:,}".format(sent_today) }} <span class="kpi-rate">/ {{ "{:,}".format(cap_today) }} cap</span></div>
+    <div class="progress"><div class="progress-bar" style="width: {{ [100, (100 * sent_today / cap_today) if cap_today else 0]|min }}%"></div></div>
+    <div class="muted-sm">{{ "{:,}".format(queued) }} queued for today's windows</div>
+  </div>
+  <div class="card kpi">
+    <div class="kpi-label">Delivered (7 days)</div>
+    <div class="kpi-value">{{ "%.1f"|format(ses_week.delivered_pct) if ses_week.sends else "—" }}{{ "%" if ses_week.sends }}</div>
+    <div class="muted-sm">{{ "{:,} of {:,} SES sends".format(ses_week.delivered, ses_week.sends) if ses_week.sends else "SES only (SMTP has no receipts)" }}</div>
+  </div>
+  <div class="card kpi">
+    <div class="kpi-label">Bounce rate (7 days)</div>
+    <div class="kpi-value">{{ "%.1f"|format(week.bounces_pct) }}%</div>
+    {% set lvl = bounce_level(week.bounces_pct) %}
+    <span class="badge badge-{{ lvl }}">{{ {"green": "Healthy", "amber": "Warning", "red": "Over"}[lvl] }} · limit {{ limits.bounce_pause_pct|round(1) }}%</span>
+  </div>
+  <div class="card kpi">
+    <div class="kpi-label">Complaint rate (7 days)</div>
+    <div class="kpi-value">{{ "%.2f"|format(week.complaints_pct) }}%</div>
+    {% set lvl = complaint_level(week.complaints_pct) %}
+    <span class="badge badge-{{ lvl }}">{{ {"green": "Healthy", "amber": "Warning", "red": "Over"}[lvl] }} · limit {{ limits.complaint_pause_pct }}%</span>
+  </div>
+  <div class="card kpi">
+    <div class="kpi-label">Replies (7 days)</div>
+    <div class="kpi-value">{{ replies_week }}</div>
+    <div class="muted-sm">{{ interested_week }} interested · {{ need_action_total }} need action</div>
+  </div>
+</div>
+{% endif %}
+
+<div class="grid-2-1">
+  {% if user.role in ('admin', 'manager') %}
+  <div class="card">
+    <div class="card-head">
+      <div><h2>Daily sends vs today's cap</h2><div class="muted-sm">Last 10 business days · all senders</div></div>
+      <div class="legend"><span class="legend-bar"></span> Sent <span class="legend-line"></span> Today's cap</div>
+    </div>
+    <div class="chart">
+      <div class="chart-cap" style="bottom: {{ 100 * cap_today / chart_max }}%"></div>
+      {% for day, n in days %}
+        <div class="chart-col">
+          <div class="chart-bar {{ 'chart-bar-today' if loop.last }}" style="height: {{ 100 * n / chart_max }}%" title="{{ n }} sent"></div>
+        </div>
+      {% endfor %}
+    </div>
+    <div class="chart-labels">
+      {% for day, n in days %}<span class="{{ 'today' if loop.last }}">{{ "Today" if loop.last else day.strftime("%d %b" if loop.first else "%d") }}</span>{% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="card inbox-mini">
+    <div class="card-head"><h2>Replies needing action</h2><a href="/replies">Open inbox</a></div>
+    {% for r, l in needs_action %}
+      <a class="inbox-item" href="/replies?id={{ r.id }}">
+        <div class="inbox-top"><strong>{{ (l.first_name ~ " " ~ l.last_name).strip() or r.from_email }} · {{ l.company }}</strong>
+          <span class="muted-sm">{{ r.received_at|local("%d %b") }}</span></div>
+        <div class="inbox-snippet">{{ r.body_text|truncate(70) }}</div>
+        <span class="badge badge-{{ labels[r.classification][1] }}">{{ labels[r.classification][0] }}</span>
+      </a>
+    {% else %}
+      <p class="muted">All caught up.</p>
+    {% endfor %}
+  </div>
+</div>
+
+{% if user.role in ('admin', 'manager') %}
+<div class="card section">
+  <div class="card-head"><h2>Campaigns</h2><a href="/campaigns">View all</a></div>
+  <div class="table-wrap">
+  <table class="table">
+    <thead><tr><th>Campaign</th><th>Provider</th><th>Status</th><th>Leads</th><th>Sent</th><th>Replies</th><th>Bounce</th><th>Next send (IST)</th></tr></thead>
+    <tbody>
+    {% for row in campaigns %}
+      {% set st = row.stats %}
+      <tr>
+        <td><a href="/campaigns/{{ row.c.id }}"><strong>{{ row.c.name }}</strong></a></td>
+        <td>{{ row.c.provider|upper }}</td>
+        <td>{{ campaign_status(row.c.status) }}</td>
+        <td>{{ "{:,}".format(row.leads) }}</td>
+        <td>{{ "{:,}".format(st.sends) }}</td>
+        <td>{{ st.replies }}{% if st.sends %} · {{ "%.1f"|format(st.replies_pct) }}%{% endif %}</td>
+        <td class="{{ 'text-red' if st.bounces_pct > limits.bounce_pause_pct }}">{{ "%.1f"|format(st.bounces_pct) ~ "%" if st.sends else "—" }}</td>
+        <td class="muted">{% if row.c.status == 'scheduled' and row.c.start_at %}Starts {{ row.c.start_at|local("%d %b") }}{% elif row.c.status == 'running' and row.next %}{{ row.next|local("%d %b %H:%M") }}{% else %}—{% endif %}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="8" class="muted">No campaigns started yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+
+<div class="card section">
+  <div class="card-head"><h2>Sender health</h2>{% if user.role == 'admin' %}<a href="/senders">Senders</a>{% endif %}</div>
+  <div class="table-wrap">
+  <table class="table">
+    <thead><tr><th>Sender</th><th>Type</th><th>Warm-up</th><th>Today / cap</th><th>Bounce 7d</th><th>Complaints 7d</th><th>Status</th></tr></thead>
+    <tbody>
+    {% for row in sender_rows %}
+      {% set w = row.week %}
+      <tr>
+        <td><strong>{{ row.s.from_email }}</strong></td>
+        <td>{{ row.s.type|upper }}</td>
+        <td>Day {{ row.s.warmup_day }} of {{ row.warmup_days }}</td>
+        <td>{{ row.today }} / {{ row.cap }}</td>
+        <td class="{{ 'text-red' if bounce_level(w.bounces_pct) == 'red' }}">{{ "%.1f"|format(w.bounces_pct) }}%</td>
+        <td class="{{ 'text-red' if complaint_level(w.complaints_pct) == 'red' }}">{{ "%.2f"|format(w.complaints_pct) }}%</td>
+        <td>{% if row.s.status == 'active' %}<span class="badge badge-green">Healthy</span>{% else %}<span class="badge badge-amber">Paused</span>{% endif %}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="7" class="muted">No senders yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

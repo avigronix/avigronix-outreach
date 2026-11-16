@@ -1,0 +1,44 @@
+{% macro lead_status(status, statuses) -%}
+{%- set colors = {"new": "blue", "in_sequence": "blue", "replied": "green", "interested": "green",
+                  "not_interested": "grey", "bounced": "red", "unsubscribed": "red", "complained": "red",
+                  "do_not_contact": "grey"} -%}
+<span class="badge badge-{{ colors.get(status, 'grey') }}">{{ statuses.get(status, status) }}</span>
+{%- endmacro %}
+
+{% macro import_status(status) -%}
+{%- set colors = {"uploaded": "grey", "validating": "amber", "validated": "blue", "importing": "amber",
+                  "done": "green", "failed": "red"} -%}
+<span class="badge badge-{{ colors.get(status, 'grey') }}">{{ status|capitalize }}</span>
+{%- endmacro %}
+
+{% macro campaign_status(status) -%}
+{%- set colors = {"draft": "grey", "scheduled": "blue", "running": "green", "paused": "amber",
+                  "completed": "grey", "stopped": "red"} -%}
+<span class="badge badge-{{ colors.get(status, 'grey') }}">{{ status|capitalize }}</span>
+{%- endmacro %}
+
+{% macro import_steps(current) -%}
+{%- set steps = ["Upload", "Map columns", "Validate", "Confirm"] -%}
+<div class="steps">
+  {% for name in steps %}
+    {% if loop.index < current %}
+      <span class="step step-done">{{ loop.index }} · {{ name }} ✓</span>
+    {% elif loop.index == current %}
+      <span class="step step-current">{{ loop.index }} · {{ name }}</span>
+    {% else %}
+      <span class="step">{{ loop.index }} · {{ name }}</span>
+    {% endif %}
+  {% endfor %}
+</div>
+{%- endmacro %}
+
+{% macro pager(page, total, page_size, base_url, query) -%}
+{%- set pages = ((total + page_size - 1) // page_size) or 1 -%}
+{% if pages > 1 %}
+<div class="pager">
+  {% if page > 1 %}<a class="btn btn-sm" href="{{ base_url }}?{{ query }}{{ '&' if query }}page={{ page - 1 }}">← Previous</a>{% endif %}
+  <span class="muted">Page {{ page }} of {{ pages }}</span>
+  {% if page < pages %}<a class="btn btn-sm" href="{{ base_url }}?{{ query }}{{ '&' if query }}page={{ page + 1 }}">Next →</a>{% endif %}
+</div>
+{% endif %}
+{%- endmacro %}

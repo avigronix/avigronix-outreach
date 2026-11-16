@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Log in{% endblock %}
+{% block layout %}
+<div class="login-wrap">
+  <form class="card login-card" method="post" action="/login">
+    <div class="brand brand-dark">
+      <div class="brand-name">AVIGRONIX</div>
+      <div class="brand-sub">Outreach dashboard</div>
+    </div>
+    {% if error %}<div class="flash flash-error">{{ error }}</div>{% endif %}
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>Email
+      <input type="email" name="email" value="{{ email or '' }}" required autofocus autocomplete="username">
+    </label>
+    <label>Password
+      <input type="password" name="password" required autocomplete="current-password">
+    </label>
+    <button class="btn btn-primary btn-block" type="submit">Log in</button>
+  </form>
+</div>
+{% endblock %}

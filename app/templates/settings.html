@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% set active = "settings" %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Settings</h1>
+    <p class="subtitle">Footer details and sending guard rails. Changes apply to the next send.</p>
+  </div>
+</div>
+
+<div class="grid-1-1">
+  <form class="card form-card" method="post" action="/settings">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <h2>Email footer</h2>
+    <label>Company name <input type="text" name="company_name" value="{{ s.company_name }}" required></label>
+    <label>Physical postal address <span class="muted-sm">(required by CAN-SPAM, shown in every email)</span>
+      <textarea name="postal_address" rows="3">{{ s.postal_address }}</textarea>
+    </label>
+
+    <h2>Sending limits</h2>
+    <label>Daily caps reset at midnight in
+      <input type="text" name="cap_day_tz" value="{{ s.cap_day_tz }}" required>
+    </label>
+    <div class="row-2">
+      <label>Auto-pause bounce rate above (%)
+        <input type="number" name="bounce_pause_pct" value="{{ s.bounce_pause_pct }}" step="0.01" min="0.01" required>
+      </label>
+      <label>Auto-pause complaint rate above (%)
+        <input type="number" name="complaint_pause_pct" value="{{ s.complaint_pause_pct }}" step="0.01" min="0.01" required>
+      </label>
+    </div>
+    <div class="row-2">
+      <label>Check auto-pause only after this many sends
+        <input type="number" name="pause_min_sends" value="{{ s.pause_min_sends }}" min="1" required>
+      </label>
+      <label>Max emails per company domain per day
+        <input type="number" name="domain_daily_max" value="{{ s.domain_daily_max }}" min="1" required>
+      </label>
+    </div>
+    <button class="btn btn-primary" type="submit">Save settings</button>
+  </form>
+
+  <div class="stack">
+  <div class="card">
+    <h2>Backups</h2>
+    <p>Nightly <code>pg_dump</code>, kept 7 days on the VPS{{ " and uploaded to s3://" ~ bucket if bucket else "" }}.</p>
+    {% if not bucket %}<div class="flash flash-error">BACKUP_S3_BUCKET is not set: backups stay on this VPS only.</div>{% endif %}
+    <dl class="kv kv-wide">
+      <dt>Last backup</dt><dd>{{ s.last_backup_at|local }} IST</dd>
+    </dl>
+    <p class="muted-sm {{ 'text-red' if s.last_backup_note.startswith('FAILED') }}">{{ s.last_backup_note or "No backup yet — the first one runs after midnight New York time." }}</p>
+    {% for name, size, mtime in backups %}<div class="muted-sm">{{ name }} · {{ "%.1f"|format(size) }} MB</div>{% endfor %}
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h2>Audit log</h2><span class="muted-sm">last 100 actions</span></div>
+    <div class="table-wrap">
+    <table class="table table-compact">
+      <thead><tr><th>When (IST)</th><th>User</th><th>Action</th><th>IP</th></tr></thead>
+      <tbody>
+      {% for log, email in logs %}
+        <tr>
+          <td class="muted">{{ log.created_at|local("%d %b, %H:%M") }}</td>
+          <td>{{ email or log.meta.get('email') or '—' }}</td>
+          <td>{{ log.action }}{% if log.entity_id %} <span class="muted">#{{ log.entity_id }}</span>{% endif %}</td>
+          <td class="muted">{{ log.ip or '' }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="4" class="muted">Nothing yet.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+  </div>
+</div>
+{% endblock %}
