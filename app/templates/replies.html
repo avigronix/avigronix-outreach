@@ -18,7 +18,8 @@
 <div class="page-head">
   <div>
     <h1>Replies</h1>
-    <p class="subtitle">Synced from the reply mailboxes every 3 minutes</p>
+    <p class="subtitle">Synced from the reply mailboxes every 3 minutes ·
+      <span class="shortcut-hint"><kbd>j</kbd> <kbd>k</kbd> next / previous · <kbd>1</kbd>–<kbd>5</kbd> outcome · <kbd>r</kbd> reply</span></p>
   </div>
   <div class="pills">
     {% for key, label in tabs.items() %}
@@ -47,6 +48,18 @@
   <div class="card inbox-thread">
     <div class="muted-sm">{{ campaign.name if campaign else "" }}{% if message %} · Step {{ message.step_no }}{{ " (follow-up %d)"|format(message.step_no - 1) if message.step_no > 1 }}{% endif %}</div>
     <h2 class="thread-subject">{{ selected.subject }}</h2>
+    {% if selected.classification == 'unsubscribe_request' and not selected.outcome and lead.status != 'unsubscribed' %}
+    <div class="banner banner-danger">
+      <div><strong>{{ selected.from_name or selected.from_email }} asked to be removed.</strong>
+        Add them to the suppression list so they never get another email.</div>
+      <form method="post" action="/replies/{{ selected.id }}/outcome">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="outcome" value="unsubscribe_request">
+        <input type="hidden" name="tab" value="{{ tab }}">
+        <button class="btn btn-danger-solid" type="submit">Unsubscribe {{ selected.from_email }}</button>
+      </form>
+    </div>
+    {% endif %}
     {% for direction, when, item in thread %}
       <div class="mail {{ 'mail-in' if direction == 'in' else 'mail-out' }} {{ 'mail-on' if item is sameas selected }}">
         <div class="mail-head">
@@ -66,9 +79,19 @@
     <form method="post" action="/replies/{{ selected.id }}/send" class="reply-box">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <input type="hidden" name="tab" value="{{ tab }}">
-      <label>Reply from {{ reply_sender.from_email }} to {{ selected.from_email }}
-        <textarea name="body" rows="6" placeholder="Hi {{ lead.first_name or 'there' }}, thanks for getting back…">{{ selected.draft }}</textarea>
-      </label>
+      <div class="reply-head">
+        <label for="reply-body">Reply from {{ reply_sender.from_email }} to {{ selected.from_email }}</label>
+        {% if snippets %}
+        <select class="snippet-pick" data-snippet-target="reply-body" aria-label="Insert a ready-made reply">
+          <option value="">Insert ready-made reply…</option>
+          {% for title, text in snippets %}<option value="{{ loop.index0 }}">{{ title }}</option>{% endfor %}
+        </select>
+        {% for title, text in snippets %}<template data-snippet="{{ loop.index0 }}">{{ text }}</template>{% endfor %}
+        {% elif user.role in ('admin', 'manager') %}
+        <a class="muted-sm" href="/templates#snippets">Add ready-made replies</a>
+        {% endif %}
+      </div>
+      <textarea id="reply-body" name="body" rows="6" placeholder="Hi {{ lead.first_name or 'there' }}, thanks for getting back…">{{ selected.draft }}</textarea>
       <p class="muted-sm">Same thread, sent through {{ "Amazon SES" if reply_sender.type == "ses" else "the SMTP mailbox" }}.
         Their message is quoted below yours, the footer is added, and the reply mailbox gets a copy (BCC).
         {% if reply_sender.status != 'active' %}<strong>Note: this sender is {{ reply_sender.status }} for campaigns.</strong>{% endif %}</p>
@@ -87,7 +110,9 @@
       <h2 class="lead-name"><a href="/leads/{{ lead.id }}">{{ (lead.first_name ~ " " ~ lead.last_name).strip() or lead.email }}</a></h2>
       <div class="muted-sm">{{ [lead.title, lead.company]|select|join(" · ") }}</div>
       <dl class="kv">
-        <dt>Local time</dt><dd>{{ lead_local or "unknown" }}</dd>
+        {% set clock = lead.timezone|lead_clock %}
+        <dt>Local time</dt><dd>{% if clock %}<span class="clock {{ 'clock-open' if clock.open }}"
+          title="{{ 'Office hours there now' if clock.open else 'Outside office hours there' }}">{{ clock.day }} {{ clock.time }} {{ clock.zone }}</span>{% else %}unknown{% endif %}</dd>
         <dt>Website</dt><dd>{% if lead.website %}<a href="https://{{ lead.website.replace('https://', '').replace('http://', '') }}" target="_blank" rel="noopener">{{ lead.website }}</a>{% else %}—{% endif %}</dd>
         <dt>Source</dt><dd>{{ source_types.get(lead.source_type, lead.source_type) }}</dd>
         <dt>Emails received</dt><dd>{{ sent_count }}{{ " of %d"|format(steps_total) if steps_total }}</dd>
@@ -95,13 +120,14 @@
     </div>
     <div class="card form-card">
       <h2>Outcome</h2>
+      {% if tab == 'needs_action' %}<p class="muted-sm">Pick one and the next reply opens.</p>{% endif %}
       <div class="outcome-grid">
         {% for key, label in outcomes.items() %}
         <form method="post" action="/replies/{{ selected.id }}/outcome">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <input type="hidden" name="outcome" value="{{ key }}">
           <input type="hidden" name="tab" value="{{ tab }}">
-          <button type="submit" class="outcome {{ 'outcome-on' if selected.outcome == key }} {{ 'outcome-danger' if key == 'unsubscribe_request' }}">{{ label }}</button>
+          <button type="submit" class="outcome {{ 'outcome-on' if selected.outcome == key }} {{ 'outcome-danger' if key == 'unsubscribe_request' }}"><kbd>{{ loop.index }}</kbd> {{ label }}</button>
         </form>
         {% endfor %}
       </div>

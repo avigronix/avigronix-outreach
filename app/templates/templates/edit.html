@@ -6,8 +6,12 @@
 <div class="page-head">
   <div>
     <h1>{{ t.name if t else "New template" }}</h1>
-    <p class="subtitle">Merge fields: <code>{{ '{{first_name}}' }}</code> <code>{{ '{{company}}' }}</code> <code>{{ '{{title}}' }}</code>
-      <code>{{ '{{city}}' }}</code> <code>{{ '{{sender_name}}' }}</code>, any custom field, and fallbacks like <code>{{ '{{first_name|there}}' }}</code></p>
+    <p class="subtitle">Click a merge field to put it where your cursor is. Any custom field from an import works too.</p>
+    <div class="chips">
+      {% for field in ['first_name|there', 'last_name', 'company', 'title', 'city', 'state|your area', 'website', 'sender_name'] %}
+        <button type="button" class="chip" data-insert="{{ '{{' ~ field ~ '}}' }}">{{ '{{' ~ field ~ '}}' }}</button>
+      {% endfor %}
+    </div>
   </div>
 </div>
 
@@ -21,6 +25,7 @@
     <label>Subject C <input type="text" name="subject_c" value="{{ subjects[2] }}"></label>
     <label>Body (plain text) <span class="muted-sm">50–150 words, one call to action, 1–2 links at most</span>
       <textarea name="body_text" rows="14">{{ t.body_text if t else '' }}</textarea>
+      <span id="word-count" class="word-count"></span>
     </label>
     <details {{ 'open' if t and t.body_html }}>
       <summary class="muted">Optional HTML version</summary>

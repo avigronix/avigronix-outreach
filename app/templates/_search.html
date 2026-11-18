@@ -1,0 +1,13 @@
+{% from "_icons.html" import icon %}
+{% for name, items in groups %}
+  <div class="search-group">{{ name }}</div>
+  {% for icon_name, title, sub, url in items %}
+    <a class="search-item" href="{{ url }}">
+      {{ icon(icon_name, 16) }}
+      <span class="search-title">{{ title }}</span>
+      {% if sub %}<span class="search-sub">{{ sub }}</span>{% endif %}
+    </a>
+  {% endfor %}
+{% else %}
+  <div class="search-empty">Nothing found for “{{ q }}”.</div>
+{% endfor %}

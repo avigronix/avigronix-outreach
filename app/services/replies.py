@@ -11,7 +11,7 @@ import re
 from datetime import date, datetime, timedelta, timezone
 
 from imap_tools import AND, MailBox, MailMessage, UidRange
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -263,6 +263,19 @@ def tab_filter(stmt, tab: str):
 
 def needs_action_count(db: Session, user: User) -> int:
     return db.scalar(select(func.count()).select_from(tab_filter(visible(user), "needs_action").subquery()))
+
+
+NEWEST_FIRST = (Reply.received_at.desc(), Reply.id.desc())
+
+
+def next_in_tab(db: Session, user: User, tab: str, current: Reply) -> Reply | None:
+    """The reply listed below `current` in this tab (the list is newest first), else the top one; None when
+    `current` was the last one. Used to open the next reply once one is handled."""
+    others = tab_filter(visible(user), tab).where(Reply.id != current.id)
+    below = or_(Reply.received_at < current.received_at,
+                and_(Reply.received_at == current.received_at, Reply.id < current.id))
+    return db.scalar(others.where(below).order_by(*NEWEST_FIRST).limit(1)) or \
+        db.scalar(others.order_by(*NEWEST_FIRST).limit(1))
 
 
 # ---------- polling ----------

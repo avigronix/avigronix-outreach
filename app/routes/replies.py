@@ -1,6 +1,5 @@
 import logging
 from datetime import datetime, timezone
-from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
@@ -10,11 +9,12 @@ from sqlalchemy.orm import Session
 from app.auth import current_user, verify_csrf
 from app.db import get_db
 from app.models import (
-    REPLY_OUTCOMES, SOURCE_TYPES, Campaign, Enrollment, Lead, Message, Reply, Sender, SequenceStep, User,
+    REPLY_OUTCOMES, SOURCE_TYPES, Campaign, Enrollment, Lead, Message, Reply, ReplySnippet, Sender, SequenceStep, User,
 )
 from app.services.audit import audit
 from app.services.providers import SendError
-from app.services.replies import send_manual_reply, tab_filter, visible
+from app.services.render import lead_values, merge
+from app.services.replies import NEWEST_FIRST, next_in_tab, send_manual_reply, tab_filter, visible
 from app.services.suppression import suppress
 from app.ui import flash, render
 
@@ -30,6 +30,8 @@ TABS = {
 # Lead status after an outcome is set.
 OUTCOME_STATUS = {"interested": "interested", "meeting_booked": "interested", "not_interested": "not_interested",
                   "wrong_person": "replied", "unsubscribe_request": "unsubscribed"}
+# Lead statuses an outcome (or its Undo) never overwrites.
+DONE_STATUSES = ("bounced", "complained", "unsubscribed", "do_not_contact")
 
 
 def get_reply(db: Session, reply_id: int, user: User) -> Reply:
@@ -45,7 +47,7 @@ def inbox(request: Request, tab: str = "needs_action", id: int | None = None, db
     tab = tab if tab in TABS else "needs_action"
     counts = {t: db.scalar(select(func.count()).select_from(tab_filter(visible(user), t).subquery())) for t in TABS}
     rows = db.execute(
-        tab_filter(visible(user), tab).add_columns(Lead).order_by(Reply.received_at.desc()).limit(100)).all()
+        tab_filter(visible(user), tab).add_columns(Lead).order_by(*NEWEST_FIRST).limit(100)).all()
     selected = get_reply(db, id, user) if id else (rows[0][0] if rows else None)
 
     context = {"tab": tab, "tabs": TABS, "counts": counts, "rows": rows, "selected": selected,
@@ -67,21 +69,31 @@ def inbox(request: Request, tab: str = "needs_action", id: int | None = None, db
         company_stopped = db.scalar(select(func.count()).select_from(Enrollment).join(Lead, Lead.id == Enrollment.lead_id)
                                     .where(Lead.domain == lead.domain, Lead.id != lead.id,
                                            Enrollment.stop_reason == "company replied"))
-        local = context["now"].astimezone(ZoneInfo(lead.timezone)) if lead.timezone else None
+        values = lead_values(lead, reply_sender.from_name if reply_sender else "")
         context.update(
             lead=lead, message=message, campaign=campaign, thread=thread, sent_count=len(sent),
             steps_total=steps_total, enrollment=enrollment, company_stopped=company_stopped,
-            lead_local=local.strftime("%I:%M %p").lstrip("0").lower() + local.strftime(" %Z") if local else "",
             users=db.scalars(select(User).where(User.is_active).order_by(User.name)).all(),
             reply_sender=reply_sender,
             senders_by_user={u.id: u.name for u in db.scalars(select(User))},
             source_types=SOURCE_TYPES,
+            # Ready-made replies with this lead's merge fields already filled in.
+            snippets=[(s.title, merge(s.body, values)[0])
+                      for s in db.scalars(select(ReplySnippet).order_by(ReplySnippet.title))],
         )
     return render(request, "replies.html", **context)
 
 
 def back(reply: Reply, tab: str = "needs_action"):
     return RedirectResponse(f"/replies?tab={tab}&id={reply.id}", status_code=303)
+
+
+def next_after(db: Session, user: User, reply: Reply, tab: str):
+    """A handled reply leaves "Needs action", so that tab opens the next one; other tabs stay on this reply."""
+    if tab != "needs_action":
+        return back(reply, tab)
+    nxt = next_in_tab(db, user, tab, reply)
+    return RedirectResponse(f"/replies?tab={tab}" + (f"&id={nxt.id}" if nxt else ""), status_code=303)
 
 
 @router.post("/{reply_id}/outcome")
@@ -91,17 +103,43 @@ def set_outcome(request: Request, reply_id: int, outcome: str = Form(...), tab: 
     if outcome not in REPLY_OUTCOMES:
         raise HTTPException(status_code=400, detail="Unknown outcome.")
     lead = db.get(Lead, reply.lead_id)
+    before = {"reply": reply.id, "tab": tab, "outcome": reply.outcome, "lead_status": lead.status,
+              "assigned_to": reply.assigned_to,
+              "handled_at": reply.handled_at.isoformat() if reply.handled_at else None}
     reply.outcome, reply.handled_at = outcome, datetime.now(timezone.utc)
     if outcome == "unsubscribe_request":
         suppress(db, lead.email, "email", "unsubscribe", "reply asked to be removed", user.id)
-    elif lead.status not in ("bounced", "complained", "unsubscribed", "do_not_contact"):
+    elif lead.status not in DONE_STATUSES:
         lead.status = OUTCOME_STATUS[outcome]
     if reply.assigned_to is None:
         reply.assigned_to = user.id
     audit(db, request, user, "reply_outcome", "reply", reply.id, outcome=outcome)
     db.commit()
-    flash(request, f"Marked as {REPLY_OUTCOMES[outcome]}.")
-    return back(reply, tab)
+    undo = None
+    if outcome != "unsubscribe_request":  # a suppression is only ever removed by an admin, never by Undo
+        request.session["undo_outcome"] = before
+        undo = f"/replies/{reply.id}/undo"
+    flash(request, f"{reply.from_email} marked as {REPLY_OUTCOMES[outcome]}.", undo=undo)
+    return next_after(db, user, reply, tab)
+
+
+@router.post("/{reply_id}/undo")
+def undo_outcome(request: Request, reply_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """The toast's Undo: put back the outcome, owner and lead status the last outcome replaced."""
+    before = request.session.pop("undo_outcome", None)
+    reply = get_reply(db, reply_id, user)
+    if not before or before["reply"] != reply.id:
+        flash(request, "Nothing to undo.", "error")
+        return back(reply, "all")
+    lead = db.get(Lead, reply.lead_id)
+    reply.outcome, reply.assigned_to = before["outcome"], before["assigned_to"]
+    reply.handled_at = datetime.fromisoformat(before["handled_at"]) if before["handled_at"] else None
+    if lead.status not in DONE_STATUSES:  # bounced/unsubscribed since then: that wins
+        lead.status = before["lead_status"]
+    audit(db, request, user, "reply_outcome_undone", "reply", reply.id, outcome=before["outcome"])
+    db.commit()
+    flash(request, "Undone.")
+    return back(reply, before["tab"])
 
 
 @router.post("/{reply_id}/assign")
@@ -129,7 +167,7 @@ def suppress_sender(request: Request, reply_id: int, tab: str = Form("needs_acti
     audit(db, request, user, "suppression_added", "lead", lead.id, value=lead.email)
     db.commit()
     flash(request, f"{lead.email} added to the suppression list.")
-    return back(reply, tab)
+    return next_after(db, user, reply, tab)
 
 
 @router.post("/{reply_id}/send")

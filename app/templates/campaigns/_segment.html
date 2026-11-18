@@ -1,0 +1,11 @@
+{% if not summary %}
+  <span class="muted-sm">Tick at least one tag to see how many leads this campaign reaches.</span>
+{% else %}
+  <div><strong>{{ "{:,}".format(summary.eligible) }}</strong> leads will be enrolled
+    <span class="muted-sm">of {{ "{:,}".format(summary.matching) }} New leads with these tags</span></div>
+  {% set left_out = summary.excluded.items()|selectattr(1)|list %}
+  {% if left_out %}
+    <div class="muted-sm">Left out: {% for name, n in left_out %}{{ "{:,}".format(n) }} {{ name }}{{ ", " if not loop.last }}{% endfor %}</div>
+  {% endif %}
+  {% if not summary.eligible %}<div class="field-error">No lead can be enrolled with these settings.</div>{% endif %}
+{% endif %}

@@ -2,6 +2,11 @@
 
 Status: **all 8 phases built (22 Oct 2026).** Production-readiness audit + deploy files in `deploy/` (16 Nov 2026),
 retargeted to the shared VPS: system Python 3.10, existing PostgreSQL 16, port 8020, Nginx port 80 behind Cloudflare.
+Usability pass (18 Nov 2026): forms keep entries on errors, campaign tag picker + live lead count, draft checklist
+on top with fix links, replies open the next one after an outcome, leads owner/tag dropdowns.
+Premium pass (18 Nov 2026): icons + toasts with Undo, Ctrl+K search, Replies keyboard shortcuts + ready-made
+replies (migration 0010), campaign send plan (estimate), lead local-time dot + journey timeline, template
+merge-field chips + word count.
 Next: deploy with `deploy/DEPLOY.md`, then the go-live checklist in README. Decisions are in section 9.
 Sources: `CLAUDE.md` (wins on conflicts), `docs/SRS.md`, `docs/ui/01–04`.
 

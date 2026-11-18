@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.auth import require_role, verify_csrf
 from app.db import get_db
-from app.models import Lead, Sender, SequenceStep, Template, User, get_app_settings
+from app.models import Lead, ReplySnippet, Sender, SequenceStep, Template, User, get_app_settings
 from app.services.audit import audit
 from app.services.crypto import unsubscribe_url
 from app.services.providers import SendError, provider_for
@@ -64,7 +64,8 @@ def editor_context(db: Session, t: Template | None, lead_id: str = "") -> dict:
 @router.get("")
 def list_templates(request: Request, db: Session = Depends(get_db), user: User = Depends(managers)):
     templates = db.scalars(select(Template).order_by(Template.name)).all()
-    return render(request, "templates/list.html", templates=templates)
+    snippets = db.scalars(select(ReplySnippet).order_by(ReplySnippet.title)).all()
+    return render(request, "templates/list.html", templates=templates, snippets=snippets)
 
 
 @router.get("/new")
@@ -113,6 +114,35 @@ def live_preview(
     """HTMX: re-render the preview panel from the editor's current (unsaved) fields."""
     subjects = clean_subjects(subject_a, subject_b, subject_c)
     return render(request, "templates/_preview.html", **build_preview(db, subjects, body_text, body_html, lead_id))
+
+
+# Ready-made replies. Declared before "/{template_id}" so these paths are not read as a template id.
+
+@router.post("/snippets")
+def create_snippet(request: Request, title: str = Form(""), body: str = Form(""), db: Session = Depends(get_db),
+                   user: User = Depends(managers)):
+    if not title.strip() or not body.strip():
+        flash(request, "A ready-made reply needs a title and text.", "error")
+        return RedirectResponse("/templates#snippets", status_code=303)
+    snippet = ReplySnippet(title=title.strip()[:100], body=body.strip(), created_by=user.id)
+    db.add(snippet)
+    db.flush()
+    audit(db, request, user, "snippet_created", "snippet", snippet.id, title=snippet.title)
+    db.commit()
+    flash(request, f"Ready-made reply “{snippet.title}” saved.")
+    return RedirectResponse("/templates#snippets", status_code=303)
+
+
+@router.post("/snippets/{snippet_id}/delete")
+def delete_snippet(request: Request, snippet_id: int, db: Session = Depends(get_db), user: User = Depends(managers)):
+    snippet = db.get(ReplySnippet, snippet_id)
+    if snippet is None:
+        raise HTTPException(status_code=404, detail="Ready-made reply not found.")
+    audit(db, request, user, "snippet_deleted", "snippet", snippet.id, title=snippet.title)
+    db.delete(snippet)
+    db.commit()
+    flash(request, f"Ready-made reply “{snippet.title}” deleted.")
+    return RedirectResponse("/templates#snippets", status_code=303)
 
 
 @router.get("/{template_id}")

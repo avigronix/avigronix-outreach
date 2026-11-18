@@ -9,7 +9,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from app.auth import LoginRequired
 from app.config import settings
 from app.routes import (
-    auth, campaigns, dashboard, imports, leads, public, replies, reports, senders, suppression, templates, users,
+    auth, campaigns, dashboard, imports, leads, public, replies, reports, search, senders, suppression, templates, users,
 )
 from app.routes import settings as settings_routes
 from app.ui import render
@@ -38,6 +38,7 @@ app.include_router(senders.router)
 app.include_router(campaigns.router)
 app.include_router(replies.router)
 app.include_router(reports.router)
+app.include_router(search.router)
 app.include_router(public.router)
 
 

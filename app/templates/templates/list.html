@@ -32,4 +32,32 @@
   </table>
   </div>
 </div>
+
+<div class="grid-2-1 section" id="snippets">
+  <div class="card">
+    <h2>Ready-made replies</h2>
+    <p class="muted-sm">Short answers the team drops into a reply on the Replies page. Merge fields work here too,
+      e.g. <code>{{ '{{first_name|there}}' }}</code> and <code>{{ '{{sender_name}}' }}</code>.</p>
+    {% for s in snippets %}
+      <div class="snippet-row">
+        <div><strong>{{ s.title }}</strong><div class="muted-sm snippet-body">{{ s.body|truncate(140) }}</div></div>
+        <form method="post" action="/templates/snippets/{{ s.id }}/delete" class="inline"
+              onsubmit="return confirm('Delete the ready-made reply “{{ s.title }}”?')">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button class="btn btn-sm btn-danger" type="submit">Delete</button>
+        </form>
+      </div>
+    {% else %}
+      <p class="muted">None yet. Add the answers you type most often: a meeting link, pricing, a case study.</p>
+    {% endfor %}
+  </div>
+  <form class="card form-card" method="post" action="/templates/snippets">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <h2>Add a ready-made reply</h2>
+    <label>Title <input type="text" name="title" maxlength="100" placeholder="Meeting link" required></label>
+    <label>Text <textarea name="body" rows="6" required
+      placeholder="Hi {{ '{{first_name|there}}' }}, here is my calendar: https://… Pick any slot that works for you."></textarea></label>
+    <button class="btn btn-primary" type="submit">Save reply</button>
+  </form>
+</div>
 {% endblock %}

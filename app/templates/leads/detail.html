@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "_macros.html" import lead_status %}
+{% from "_icons.html" import icon %}
 {% set active = "leads" %}
 {% block title %}{{ lead.email }}{% endblock %}
 {% block content %}
@@ -7,7 +8,10 @@
 <div class="page-head">
   <div>
     <h1>{{ (lead.first_name ~ ' ' ~ lead.last_name).strip() or lead.email }} {{ lead_status(lead.status, statuses) }}</h1>
-    <p class="subtitle">{{ [lead.title, lead.company]|select|join(' · ') }}</p>
+    <p class="subtitle">{{ [lead.title, lead.company]|select|join(' · ') }}
+      {% set clock = lead.timezone|lead_clock %}
+      {% if clock %}· <span class="clock {{ 'clock-open' if clock.open }}"
+        title="{{ 'Office hours there now' if clock.open else 'Outside office hours there' }}">{{ clock.day }} {{ clock.time }} {{ clock.zone }} there</span>{% endif %}</p>
   </div>
 </div>
 
@@ -51,27 +55,27 @@
     </div>
 
     <div class="card">
-      <h2>Timeline</h2>
-      {% for m, name in messages %}
-        <details class="timeline-row">
-          <summary>
-            <strong>{{ m.subject }}</strong>
-            <span class="badge badge-{{ {'sent': 'green', 'failed': 'red', 'retry': 'amber', 'unknown': 'amber'}.get(m.status, 'blue') }}">{{ m.status }}</span>
-            <div class="muted-sm">{{ name }} · step {{ m.step_no }} · {{ (m.sent_at or m.created_at)|local }} IST</div>
-          </summary>
-          <pre class="email-body">{{ m.body_text }}</pre>
-          {% if m.error %}<p class="muted-sm">{{ m.error }}</p>{% endif %}
-        </details>
-      {% else %}
-        <p class="muted">No emails sent yet.</p>
-      {% endfor %}
-      {% for e in events %}
-        <div class="timeline-row">
-          <div><span class="badge badge-{{ {'delivery': 'green', 'bounce_hard': 'red', 'bounce_soft': 'amber', 'complaint': 'red'}.get(e.type, 'grey') }}">{{ e.type.replace('_', ' ') }}</span>
-            <span class="muted-sm">{{ e.detail|truncate(90) }}</span></div>
-          <span class="muted-sm">{{ e.occurred_at|local }} IST</span>
-        </div>
-      {% endfor %}
+      <div class="card-head">
+        <h2>Journey</h2>
+        <span class="muted-sm">IST{{ " · their local time in grey" if lead.timezone }}</span>
+      </div>
+      <ol class="journey">
+        {% for j in journey %}
+        <li class="journey-item journey-{{ j.tone }}">
+          <span class="journey-dot">{{ icon(j.icon, 14) }}</span>
+          <div class="journey-body">
+            <div class="journey-head">
+              <strong>{% if j.link %}<a href="{{ j.link }}">{{ j.title }}</a>{% else %}{{ j.title }}{% endif %}</strong>
+              <span class="journey-when">{{ j.when|local("%d %b %Y, %H:%M") }}{% if lead.timezone %}<span class="muted-sm"> · {{ j.when|in_zone(lead.timezone) }} there</span>{% endif %}</span>
+            </div>
+            {% if j.detail %}<div class="journey-detail">{{ j.detail|truncate(160) }}</div>{% endif %}
+            {% if j.text and j.icon == 'campaigns' %}
+              <details><summary class="muted-sm">Show the email</summary><pre class="email-body">{{ j.text }}</pre></details>
+            {% endif %}
+          </div>
+        </li>
+        {% endfor %}
+      </ol>
     </div>
   </div>
 

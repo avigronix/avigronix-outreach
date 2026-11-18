@@ -363,6 +363,16 @@ class Reply(TimestampMixin, Base):
     draft: Mapped[str] = mapped_column(Text, default="", server_default="")  # unsent answer to this reply
 
 
+class ReplySnippet(TimestampMixin, Base):
+    """A ready-made answer the Replies page can drop into the reply box (merge fields allowed)."""
+
+    __tablename__ = "reply_snippets"
+
+    title: Mapped[str] = mapped_column(String(100))
+    body: Mapped[str] = mapped_column(Text)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+
+
 class ImapCursor(TimestampMixin, Base):
     """How far each mailbox has been read (by IMAP UID), so mail is processed once."""
 

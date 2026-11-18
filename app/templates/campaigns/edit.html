@@ -1,6 +1,9 @@
 {% extends "base.html" %}
 {% set active = "campaigns" %}
 {% block title %}{{ c.name if c else "New campaign" }}{% endblock %}
+{% macro field_error(name) -%}
+  {% if error and error.field == name %}<div class="field-error">{{ error.message }}</div>{% endif %}
+{%- endmacro %}
 {% block content %}
 <p class="crumbs"><a href="/campaigns">Campaigns</a> / {{ c.name if c else "New" }}</p>
 <div class="page-head">
@@ -10,72 +13,102 @@
   </div>
 </div>
 
-<form method="post" action="{{ '/campaigns/%d/edit'|format(c.id) if c else '/campaigns' }}" class="grid-1-1">
+{% if error %}<div class="flash flash-error">Not saved yet: {{ error.message }} Your entries are kept below.</div>{% endif %}
+
+<form id="campaign-form" method="post" action="{{ '/campaigns/%d/edit'|format(c.id) if c else '/campaigns' }}" class="grid-1-1">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  {% if c %}<input type="hidden" name="campaign_id" value="{{ c.id }}">{% endif %}
   <div class="stack">
     <div class="card form-card">
       <h2>Basics</h2>
-      <label>Name <input type="text" name="name" value="{{ c.name if c else '' }}" placeholder="US Dental Clinics — Website Revamp" required></label>
-      <label>Sending provider
+      <label class="{{ 'has-error' if error and error.field == 'name' }}">Name
+        <input type="text" name="name" value="{{ f.name }}" placeholder="US Dental Clinics — Website Revamp" required>
+        {{ field_error('name') }}</label>
+      <label class="{{ 'has-error' if error and error.field == 'provider' }}">Sending provider
         {% if c and c.status != 'draft' %}
           <input type="text" value="{{ c.provider|upper }}" disabled><input type="hidden" name="provider" value="{{ c.provider }}">
         {% else %}
-        <select name="provider">
-          <option value="ses" {{ 'selected' if c and c.provider == 'ses' }}>Amazon SES (opt-in, clients, inquiries)</option>
-          <option value="smtp" {{ 'selected' if c and c.provider == 'smtp' }}>SMTP mailboxes (purchased / compiled lists)</option>
+        <select name="provider" onchange="showSenders(this.value)">
+          <option value="ses" {{ 'selected' if f.provider == 'ses' }}>Amazon SES (opt-in, clients, inquiries)</option>
+          <option value="smtp" {{ 'selected' if f.provider == 'smtp' }}>SMTP mailboxes (purchased / compiled lists)</option>
         </select>
         {% endif %}
-      </label>
-      <div>
-        <div class="label-text">Sender pool <span class="muted-sm">(same type as the provider)</span></div>
+        {{ field_error('provider') }}</label>
+      <div class="{{ 'has-error' if error and error.field == 'senders' }}">
+        <div class="label-text">Sender pool <span class="muted-sm">(only senders of the chosen provider are shown)</span></div>
         {% for s in senders %}
-          <label class="check"><input type="checkbox" name="sender_ids" value="{{ s.id }}" {{ 'checked' if s.id in pool_ids }}>
+          <label class="check sender-opt" data-type="{{ s.type }}"><input type="checkbox" name="sender_ids" value="{{ s.id }}" {{ 'checked' if s.id in f.sender_ids }}>
             {{ s.from_email }} <span class="muted-sm">{{ s.type|upper }}{{ ' · ' ~ s.status if s.status != 'active' }}</span></label>
         {% else %}
           <p class="muted">No senders yet — an admin adds them on the Senders page.</p>
         {% endfor %}
+        <p class="muted-sm" id="no-senders" hidden>No sender of this type yet — an admin adds one on the Senders page.</p>
+        {{ field_error('senders') }}
       </div>
     </div>
 
     <div class="card form-card">
       <h2>Segment</h2>
-      <label>Lead tags <span class="muted-sm">(leads with any of these tags and status New)</span>
-        <input type="text" name="tags" value="{{ c.segment.get('tags', [])|join(', ') if c else '' }}" placeholder="us-dental" required></label>
+      <div class="{{ 'has-error' if error and error.field == 'tags' }}">
+        <div class="label-text">Lead tags <span class="muted-sm">(New leads with any of the ticked tags)</span></div>
+        {% if tag_options %}
+        <div class="tag-picker">
+          {% for tag, n in tag_options.items() %}
+            <label class="check"><input type="checkbox" name="tags" value="{{ tag }}" {{ 'checked' if tag in f.tags }}>
+              {{ tag }} <span class="muted-sm">{{ "{:,}".format(n) }} new</span></label>
+          {% endfor %}
+        </div>
+        {% else %}
+          <p class="muted-sm">No tagged leads yet. Import leads with a tag first, or type the tag below.</p>
+        {% endif %}
+        <label>Other tags <span class="muted-sm">(optional, comma separated — for leads you will import later)</span>
+          <input type="text" name="tags_extra" value=""></label>
+        {{ field_error('tags') }}
+      </div>
       <label>Countries <span class="muted-sm">(optional, e.g. US, GB — empty = all)</span>
-        <input type="text" name="countries" value="{{ c.segment.get('countries', [])|join(', ') if c else '' }}"></label>
-      <label class="check"><input type="checkbox" name="allow_canada" value="1" {{ 'checked' if c and c.allow_canada }}>
+        <input type="text" name="countries" value="{{ f.countries }}"></label>
+      <label class="check"><input type="checkbox" name="allow_canada" value="1" {{ 'checked' if f.allow_canada }}>
         Include Canadian leads <span class="muted-sm">(CASL — only with consent)</span></label>
+      <div id="segment-count" class="segment-count"
+           hx-post="/campaigns/segment-preview" hx-include="#campaign-form"
+           hx-trigger="load, change from:#campaign-form">
+        <span class="muted-sm">Counting matching leads…</span>
+      </div>
     </div>
 
     <div class="card form-card">
       <h2>Schedule</h2>
-      <label>Send windows, lead's local time <input type="text" name="windows" value="{{ windows }}" required></label>
+      <label class="{{ 'has-error' if error and error.field == 'schedule' }}">Send windows, lead's local time
+        <input type="text" name="windows" value="{{ f.windows }}" placeholder="09:00-11:30, 13:30-16:30" required></label>
       <div>
         <div class="label-text">Days</div>
         <div class="weekday-row">
         {% for d in weekdays %}
-          <label class="check"><input type="checkbox" name="weekdays" value="{{ loop.index0 }}" {{ 'checked' if loop.index0 in schedule.weekdays }}> {{ d }}</label>
+          <label class="check"><input type="checkbox" name="weekdays" value="{{ loop.index0 }}" {{ 'checked' if loop.index0 in f.weekdays }}> {{ d }}</label>
         {% endfor %}
         </div>
         <p class="muted-sm">US public holidays are always skipped.</p>
       </div>
+      {{ field_error('schedule') }}
       <div class="row-2">
-        <label>Timezone when a lead has none <input type="text" name="default_tz" value="{{ schedule.default_tz }}"></label>
-        <label>Campaign daily cap <input type="number" name="daily_cap" value="{{ c.daily_cap if c else 400 }}" min="1" max="10000"></label>
+        <label>Timezone when a lead has none <input type="text" name="default_tz" value="{{ f.default_tz }}"></label>
+        <label class="{{ 'has-error' if error and error.field == 'daily_cap' }}">Campaign daily cap
+          <input type="number" name="daily_cap" value="{{ f.daily_cap }}" min="1" max="10000">{{ field_error('daily_cap') }}</label>
       </div>
-      <label>Start on <span class="muted-sm">(optional; empty = as soon as you press Start)</span>
-        <input type="date" name="start_date" value="{{ c.start_at|local('%Y-%m-%d') if c and c.start_at else '' }}"></label>
-      <label class="check"><input type="checkbox" name="stop_company_on_reply" value="1" {{ 'checked' if not c or c.stop_company_on_reply }}>
+      <label class="{{ 'has-error' if error and error.field == 'start_date' }}">Start on <span class="muted-sm">(optional; empty = as soon as you press Start)</span>
+        <input type="date" name="start_date" value="{{ f.start_date }}">{{ field_error('start_date') }}</label>
+      <label class="check"><input type="checkbox" name="stop_company_on_reply" value="1" {{ 'checked' if f.stop_company }}>
         Stop the whole company when anyone there replies</label>
     </div>
   </div>
 
   <div class="stack">
-    <div class="card form-card">
+    <div class="card form-card {{ 'has-error' if error and error.field == 'steps' }}">
       <h2>Sequence</h2>
       <p class="muted-sm">Initial email + up to 4 follow-ups. Delays are business days after the previous step. "Same thread" sends it as a reply ("Re: …").</p>
+      {{ field_error('steps') }}
       {% for n in range(1, max_steps + 1) %}
-        {% set st = steps.get(n) %}
+        {% set st = f.steps.get(n) %}
         <div class="step-row">
           <div class="step-num">{{ n }}</div>
           <div class="step-fields">
@@ -87,7 +120,7 @@
             </label>
             {% if n > 1 %}
             <div class="row-2">
-              <label>Wait (business days) <input type="number" name="step_{{ n }}_delay" min="1" value="{{ st.delay_business_days if st else [3, 5, 7, 7][n - 2] }}"></label>
+              <label>Wait (business days) <input type="number" name="step_{{ n }}_delay" min="1" value="{{ st.delay if st and st.delay != '' else [3, 5, 7, 7][n - 2] }}"></label>
               <label class="check"><input type="checkbox" name="step_{{ n }}_same_thread" value="1" {{ 'checked' if not st or st.same_thread }}> Same thread</label>
             </div>
             {% endif %}
@@ -98,4 +131,17 @@
     <button class="btn btn-primary" type="submit">Save campaign</button>
   </div>
 </form>
+<script>
+  // Show only the senders that match the provider; untick the others so they are not submitted.
+  function showSenders(type) {
+    let shown = 0;
+    document.querySelectorAll('.sender-opt').forEach(el => {
+      el.hidden = el.dataset.type !== type;
+      if (el.hidden) el.querySelector('input').checked = false; else shown++;
+    });
+    const none = document.getElementById('no-senders');
+    if (none) none.hidden = shown > 0 || !document.querySelector('.sender-opt');
+  }
+  showSenders(document.querySelector('#campaign-form [name=provider]').value);
+</script>
 {% endblock %}

@@ -16,13 +16,17 @@
   {% endif %}
 </div>
 
-<form class="card filters" method="get" action="/leads">
-  <input type="search" name="q" value="{{ filters.q or '' }}" placeholder="Search email, name, company">
+<form class="card filters" method="get" action="/leads" id="filter-form">
+  <input type="search" name="q" value="{{ filters.q or '' }}" placeholder="Search email, name, company (Enter)">
   <select name="status">
     <option value="">Any status</option>
     {% for key, label in statuses.items() %}<option value="{{ key }}" {{ 'selected' if filters.status == key }}>{{ label }}</option>{% endfor %}
   </select>
-  <input type="text" name="tag" value="{{ filters.tag or '' }}" placeholder="Tag">
+  <select name="tag">
+    <option value="">Any tag</option>
+    {% for t in tags %}<option value="{{ t }}" {{ 'selected' if t == filters.tag }}>{{ t }}</option>{% endfor %}
+    {% if filters.tag and filters.tag not in tags %}<option value="{{ filters.tag }}" selected>{{ filters.tag }}</option>{% endif %}
+  </select>
   <select name="source">
     <option value="">Any source</option>
     {% for key, label in source_types.items() %}<option value="{{ key }}" {{ 'selected' if filters.source == key }}>{{ label }}</option>{% endfor %}
@@ -44,6 +48,10 @@
   <button class="btn" type="submit">Filter</button>
   {% if filters %}<a href="/leads">Clear</a>{% endif %}
 </form>
+<script>
+  // Dropdown filters apply as soon as one is picked; text boxes apply on Enter.
+  document.querySelectorAll('#filter-form select').forEach(s => s.addEventListener('change', () => s.form.submit()));
+</script>
 
 <form method="post" action="/leads/bulk" class="card" id="bulk-form">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -51,19 +59,30 @@
 
   {% if can_manage %}
   <div class="bulk-bar">
-    <select name="action" required>
+    <select name="action" required id="bulk-action">
       <option value="">Bulk action…</option>
       <option value="add_tag">Add tag</option>
       <option value="remove_tag">Remove tag</option>
-      <option value="set_owner">Set owner (user id or empty)</option>
+      <option value="set_owner">Set owner</option>
       {% if user.role == 'admin' %}<option value="delete">Delete leads</option>{% endif %}
     </select>
-    <input type="text" name="value" placeholder="Tag, or owner" list="owner-ids" class="short">
-    <datalist id="owner-ids">{% for id, name in owners.items() %}<option value="{{ id }}">{{ name }}</option>{% endfor %}</datalist>
+    <input type="text" name="value" placeholder="Tag" list="tag-list" class="short" id="bulk-tag" hidden>
+    <datalist id="tag-list">{% for t in tags %}<option value="{{ t }}">{% endfor %}</datalist>
+    <select name="owner_value" id="bulk-owner" hidden>
+      <option value="">No owner</option>
+      {% for id, name in owners.items() %}<option value="{{ id }}">{{ name }}</option>{% endfor %}
+    </select>
     <label class="check"><input type="checkbox" name="all_matching" value="1"> All {{ "{:,}".format(total) }} matching leads</label>
     <button class="btn btn-sm" type="submit"
-            onclick="return this.form.elements['action'].value !== 'delete' || confirm('Delete the selected leads? This cannot be undone.')">Apply</button>
+            onclick="return this.form.elements['action'].value !== 'delete' || confirm('Delete ' + (this.form.elements['all_matching'].checked ? 'all {{ "{:,}".format(total) }} matching' : 'the selected') + ' leads? This cannot be undone.')">Apply</button>
   </div>
+  <script>
+    // Show the box that goes with the chosen action: a tag to type, or an owner to pick.
+    document.getElementById('bulk-action').addEventListener('change', e => {
+      document.getElementById('bulk-tag').hidden = !['add_tag', 'remove_tag'].includes(e.target.value);
+      document.getElementById('bulk-owner').hidden = e.target.value !== 'set_owner';
+    });
+  </script>
   {% endif %}
 
   <div class="table-wrap">

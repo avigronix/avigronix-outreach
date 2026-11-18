@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from pathlib import Path
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import Request
 from fastapi.templating import Jinja2Templates
@@ -11,6 +11,7 @@ from app.auth import csrf_token
 from app.config import settings
 from app.db import SessionLocal
 from app.services.replies import needs_action_count
+from app.services.scheduler import is_business_day
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
@@ -39,10 +40,42 @@ def local_time(value: datetime | None, fmt: str = "%d %b %Y, %H:%M") -> str:
 
 templates.env.filters["local"] = local_time
 
+OFFICE_HOURS = (9, 17)  # lead's local time, for the "good time to reply?" dot
 
-def flash(request: Request, message: str, kind: str = "ok") -> None:
-    """Message shown once on the next rendered page. kind: ok / error."""
-    request.session["flashes"] = request.session.get("flashes", []) + [[kind, message]]
+
+def lead_clock(tz_name: str | None, now: datetime | None = None) -> dict | None:
+    """The lead's time right now and whether it is inside office hours there (Mon–Fri, 9–17, no US holiday)."""
+    if not tz_name:
+        return None
+    try:
+        here = (now or datetime.now(ZoneInfo("UTC"))).astimezone(ZoneInfo(tz_name))
+    except (ZoneInfoNotFoundError, ValueError):
+        return None
+    open_now = is_business_day(here.date()) and OFFICE_HOURS[0] <= here.hour < OFFICE_HOURS[1]
+    return {"time": here.strftime("%I:%M %p").lstrip("0"), "zone": here.strftime("%Z"), "day": here.strftime("%a"),
+            "open": open_now}
+
+
+templates.env.filters["lead_clock"] = lead_clock
+
+
+def in_zone(value: datetime | None, tz_name: str | None, fmt: str = "%a %I:%M %p") -> str:
+    """A UTC timestamp in the lead's own time zone ("" when either is unknown)."""
+    if value is None or not tz_name:
+        return ""
+    try:
+        return value.astimezone(ZoneInfo(tz_name)).strftime(fmt).replace(" 0", " ")
+    except (ZoneInfoNotFoundError, ValueError):
+        return ""
+
+
+templates.env.filters["in_zone"] = in_zone
+
+
+def flash(request: Request, message: str, kind: str = "ok", undo: str | None = None) -> None:
+    """Message shown once on the next rendered page, as a toast. kind: ok / error.
+    `undo` = a URL the toast's Undo button POSTs to."""
+    request.session["flashes"] = request.session.get("flashes", []) + [[kind, message, undo]]
 
 
 def nav_badges(user) -> dict[str, int]:

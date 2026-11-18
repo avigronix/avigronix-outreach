@@ -15,14 +15,19 @@
       {% if c.pause_reason %}· <strong>{{ c.pause_reason }}</strong>{% endif %}
     </p>
   </div>
+  {% set failing = checks|rejectattr(1)|list %}
   <div class="head-actions">
-    {% macro action(name, label, primary=False, confirm=None) %}
+    {% macro action(name, label, primary=False, confirm=None, disabled=False) %}
       <form method="post" action="/campaigns/{{ c.id }}/{{ name }}" class="inline" {% if confirm %}onsubmit="return confirm('{{ confirm }}')"{% endif %}>
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <button class="btn {{ 'btn-primary' if primary }}" type="submit">{{ label }}</button>
+        <button class="btn {{ 'btn-primary' if primary }}" type="submit" {% if disabled %}disabled title="Fix the checklist below first"{% endif %}>{{ label }}</button>
       </form>
     {% endmacro %}
-    {% if c.status == 'draft' %}{{ action('start', 'Start campaign', True, 'Start sending? Leads are enrolled now.') }}{% endif %}
+    {% if c.status == 'draft' %}
+      {{ action('start', 'Start campaign', True,
+                'Start sending to %s leads? They are enrolled now and the first emails go out in their next send window.'|format("{:,}".format(summary.eligible)),
+                disabled=failing) }}
+    {% endif %}
     {% if c.status in ('running', 'scheduled') %}{{ action('pause', 'Pause campaign') }}{% endif %}
     {% if c.status == 'paused' %}{{ action('resume', 'Resume', True) }}{% endif %}
     {% if c.status in ('running', 'scheduled', 'paused') %}{{ action('enroll', 'Add new matching leads') }}{% endif %}
@@ -30,6 +35,33 @@
     {% if c.status not in ('completed', 'stopped', 'draft') %}{{ action('stop', 'Stop', False, 'Stop for good? All leads leave the sequence.') }}{% endif %}
   </div>
 </div>
+
+{% macro checks_card(title) %}
+  <div class="card">
+    <h2>{{ title }}</h2>
+    <dl class="kv kv-wide">
+      {% for label, ok, detail, fix_url in checks %}
+        <dt>{{ label }}<div class="muted-sm">{{ detail }}</div></dt>
+        <dd>
+          {% if ok %}<span class="badge badge-green">Pass</span>
+          {% elif fix_url and (user.role == 'admin' or not fix_url.startswith(('/senders', '/settings'))) %}
+            <a class="btn btn-sm btn-fix" href="{{ fix_url }}">Fix →</a>
+          {% else %}<span class="badge badge-red">{{ "Admin fixes this" if fix_url else "Fix" }}</span>{% endif %}
+        </dd>
+      {% endfor %}
+    </dl>
+    {% if summary and summary.excluded %}
+      <p class="muted-sm">{{ "{:,}".format(summary.matching) }} new leads match the tags.
+        Not enrolled: {% for name, n in summary.excluded.items() if n %}{{ n }} {{ name }}{{ ", " if not loop.last }}{% else %}none{% endfor %}.</p>
+    {% endif %}
+  </div>
+{% endmacro %}
+
+{% if c.status == 'draft' %}
+<div class="section-gap">
+  {{ checks_card("Before you start · %d of %d ready"|format(checks|length - failing|length, checks|length)) }}
+</div>
+{% endif %}
 
 <div class="kpis">
   <div class="card kpi"><div class="kpi-label">Enrolled</div><div class="kpi-value">{{ "{:,}".format(enrolled) }}</div>
@@ -48,6 +80,16 @@
   <div class="card kpi"><div class="kpi-label">Unsubscribed</div><div class="kpi-value">{{ stopped.get('unsubscribed', 0) }}
     {% if sent_total %}<span class="kpi-rate">{{ "%.1f"|format(100 * stopped.get('unsubscribed', 0) / enrolled) }}%</span>{% endif %}</div></div>
 </div>
+
+{% if c.status not in ('completed', 'stopped') %}
+<div class="card section-gap">
+  <div class="card-head">
+    <h2>Send plan <span class="muted-sm">· estimate</span></h2>
+    <span class="muted-sm">{{ "What happens when you press Start" if c.status == 'draft' else "From today" }}</span>
+  </div>
+  <div hx-get="/campaigns/{{ c.id }}/plan" hx-trigger="load"><p class="muted-sm">Working out the plan…</p></div>
+</div>
+{% endif %}
 
 {% if unknown %}
 <div class="banner banner-warn">
@@ -155,19 +197,7 @@
         over the last {{ health.sends }} sends{% if c.health_since %} since resume{% endif %}.</p>
     </div>
 
-    <div class="card">
-      <h2>{{ "Pre-launch check" if c.status == 'draft' else "Compliance check" }}</h2>
-      <dl class="kv kv-wide">
-        {% for label, ok, detail in checks %}
-          <dt>{{ label }}<div class="muted-sm">{{ detail }}</div></dt>
-          <dd><span class="badge badge-{{ 'green' if ok else 'red' }}">{{ "Pass" if ok else "Fix" }}</span></dd>
-        {% endfor %}
-      </dl>
-      {% if summary and summary.excluded %}
-        <p class="muted-sm">{{ "{:,}".format(summary.matching) }} new leads match the tags.
-          Not enrolled: {% for name, n in summary.excluded.items() if n %}{{ n }} {{ name }}{{ ", " if not loop.last }}{% else %}none{% endfor %}.</p>
-      {% endif %}
-    </div>
+    {% if c.status != 'draft' %}{{ checks_card("Compliance check") }}{% endif %}
   </div>
 </div>
 {% endblock %}

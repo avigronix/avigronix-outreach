@@ -1,0 +1,29 @@
+{% if plan.problem %}
+  <p class="muted">{{ plan.problem }}</p>
+{% else %}
+  <p class="plan-summary">
+    <strong>{{ "{:,}".format(plan.total) }} emails</strong> over <strong>{{ plan.send_days }} send days</strong>:
+    first {{ plan.first.strftime("%a %d %b") }}, last {{ plan.last.strftime("%a %d %b %Y") }}.
+    {% if plan.unsent %}<span class="text-red">{{ "{:,}".format(plan.unsent) }} more would still be waiting after a year — raise the caps or add senders.</span>{% endif %}
+  </p>
+  <div class="plan-chart" role="img" aria-label="Emails per {{ 'week' if plan.weekly else 'day' }}">
+    {% for when, sent, total in plan.bars %}
+      <div class="plan-col" title="{{ ('Week of ' if plan.weekly else '') ~ when.strftime('%a %d %b') }}: {{ total }} emails{% for step, n in sent|dictsort %} · step {{ step }}: {{ n }}{% endfor %}">
+        {% for step in plan.steps %}{% if sent.get(step) %}
+          <div class="plan-seg plan-step-{{ step }}" style="height: {{ 100 * sent[step] / plan.busiest }}%"></div>
+        {% endif %}{% endfor %}
+      </div>
+    {% endfor %}
+  </div>
+  <div class="plan-axis">
+    <span>{{ plan.bars[0][0].strftime("%d %b") }}</span>
+    <span>{{ "Weekly totals" if plan.weekly else "Each bar = one send day" }} · busiest {{ plan.busiest }}</span>
+    <span>{{ plan.bars[-1][0].strftime("%d %b") }}</span>
+  </div>
+  <div class="legend plan-legend">
+    {% for step in plan.steps %}<span><i class="plan-dot plan-step-{{ step }}"></i>{{ "Initial email" if step == 1 else "Follow-up " ~ (step - 1) }}</span>{% endfor %}
+  </div>
+  <p class="muted-sm">Estimate if nobody replies, bounces or unsubscribes, so the real numbers will be lower.
+    Uses the send days, US holidays, the campaign cap, each sender's warm-up and daily cap, the gap between sends
+    and the per-company limit.{% if c.status == 'paused' %} Shown as if you resume today.{% endif %}</p>
+{% endif %}

@@ -90,6 +90,21 @@ def apply_form(db: Session, sender: Sender, form) -> str | None:
     return None
 
 
+FORM_TEXT = ("from_name", "from_email", "reply_to", "smtp_host", "smtp_user", "imap_host", "dkim_selector")
+FORM_INT = ("smtp_port", "imap_port", "daily_cap", "warmup_day", "gap_min_sec", "gap_max_sec", "warmup_override_cap")
+
+
+def show_typed(sender: Sender, form) -> None:
+    """Put what was typed back on the sender, only to show the form again after an error.
+    The caller never commits after this (the request's session is closed without saving)."""
+    for name in FORM_TEXT:
+        if name in form:
+            setattr(sender, name, str(form[name]))
+    for name in FORM_INT:
+        if name in form:
+            setattr(sender, name, as_int(form[name]))
+
+
 @router.get("")
 def list_senders(request: Request, db: Session = Depends(get_db), admin: User = Depends(admin_only)):
     senders = db.scalars(select(Sender).order_by(Sender.type, Sender.from_email)).all()
@@ -119,8 +134,9 @@ def create_sender(request: Request, form=Depends(form_data), db: Session = Depen
     except RuntimeError as exc:  # FERNET_KEY missing
         problem = str(exc)
     if problem:
-        flash(request, problem, "error")
-        return RedirectResponse(f"/senders/new?type={sender_type}", status_code=303)
+        show_typed(sender, form)
+        return render(request, "senders/edit.html", 400, s=sender, is_new=True, error=problem,
+                      ses_ready=bool(settings.aws_access_key_id))
     db.add(sender)
     db.flush()
     audit(db, request, admin, "sender_created", "sender", sender.id, email=sender.from_email, type=sender.type)
@@ -151,8 +167,12 @@ def save_sender(request: Request, sender_id: int, form=Depends(form_data), db: S
         problem = str(exc)
     if problem:
         db.rollback()
-        flash(request, problem, "error")
-        return RedirectResponse(f"/senders/{sender.id}", status_code=303)
+        cap, table_cap = effective_daily_cap(sender), warmup_cap(sender.type, sender.warmup_day)  # saved values
+        show_typed(sender, form)
+        with db.no_autoflush:  # the typed values must never reach the database
+            return render(request, "senders/edit.html", 400, s=sender, is_new=False, error=problem,
+                          ses_ready=bool(settings.aws_access_key_id), cap=cap, table_cap=table_cap,
+                          warmup_days=WARMUP_DAYS)
     after = {k: getattr(sender, k) for k in before}
     audit(db, request, admin, "sender_updated", "sender", sender.id,
           changes={k: [before[k], after[k]] for k in before if before[k] != after[k]})

@@ -21,6 +21,10 @@
   <form class="card form-card" method="post" action="{{ '/senders' if is_new else '/senders/%d'|format(s.id) }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <input type="hidden" name="type" value="{{ s.type }}">
+    {% if error %}
+      <div class="flash flash-error">Not saved yet: {{ error }}
+        Your entries are kept below{% if s.type == 'smtp' %} — type the app password again{% endif %}.</div>
+    {% endif %}
     <h2>Identity</h2>
     <div class="row-2">
       <label>From name <input type="text" name="from_name" value="{{ s.from_name }}" placeholder="Vikas from Avigronix" required></label>

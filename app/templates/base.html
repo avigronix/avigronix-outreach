@@ -1,11 +1,13 @@
 <!doctype html>
 <html lang="en">
+{% from "_icons.html" import icon %}
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Outreach{% endblock %} · Avigronix</title>
   <link rel="stylesheet" href="/static/app.css">
   <script src="/static/htmx.min.js" defer></script>
+  <script src="/static/app.js" defer></script>
 </head>
 <body hx-headers='{"X-CSRF-Token": "{{ csrf_token }}"}'>
 {% block layout %}
@@ -15,10 +17,15 @@
       <div class="brand-name">AVIGRONIX</div>
       <div class="brand-sub">Outreach dashboard</div>
     </div>
+    {% if user %}
+    <button class="search-trigger" type="button" data-open-search>
+      {{ icon("search", 16) }}<span>Search</span><kbd>Ctrl K</kbd>
+    </button>
+    {% endif %}
     <nav class="nav">
       {% for key, label, url, roles, ready in nav %}
         {% if ready %}
-          <a href="{{ url }}" class="{{ 'active' if active == key }}">{{ label }}{% if badges.get(key) %}<span class="nav-badge">{{ badges[key] }}</span>{% endif %}</a>
+          <a href="{{ url }}" class="{{ 'active' if active == key }}"><span class="nav-label">{{ icon(key) }}{{ label }}</span>{% if badges.get(key) %}<span class="nav-badge">{{ badges[key] }}</span>{% endif %}</a>
         {% else %}
           <span class="soon" title="Coming in a later phase">{{ label }}</span>
         {% endif %}
@@ -36,12 +43,38 @@
     {% endif %}
   </aside>
   <main class="main">
-    {% for kind, message in flashes %}
-      <div class="flash flash-{{ kind }}">{{ message }}</div>
-    {% endfor %}
     {% block content %}{% endblock %}
   </main>
 </div>
+{% if user %}
+<dialog class="search-dialog" id="search-dialog" aria-label="Search">
+  <div class="search-box">
+    {{ icon("search") }}
+    <input id="search-input" name="q" type="search" autocomplete="off"
+           placeholder="Search leads, campaigns, templates, pages…"
+           hx-get="/search" hx-trigger="input changed delay:200ms, search" hx-target="#search-results">
+  </div>
+  <div id="search-results" class="search-results"></div>
+  <div class="search-foot">↑ ↓ move · Enter open · Esc close</div>
+</dialog>
+{% endif %}
 {% endblock %}
+
+<div class="toasts" aria-live="polite">
+  {% for f in flashes %}
+  {% set kind, message, undo = f[0], f[1], (f[2] if f|length > 2 else None) %}
+  <div class="toast toast-{{ kind }}" role="status" data-undo="{{ 1 if undo else 0 }}">
+    <span class="toast-icon">{{ icon("check" if kind == "ok" else "alert", 18) }}</span>
+    <span class="toast-msg">{{ message }}</span>
+    {% if undo %}
+    <form method="post" action="{{ undo }}" class="inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button class="toast-undo" type="submit">{{ icon("undo", 15) }} Undo</button>
+    </form>
+    {% endif %}
+    <button class="toast-close" type="button" aria-label="Close">{{ icon("close", 15) }}</button>
+  </div>
+  {% endfor %}
+</div>
 </body>
 </html>

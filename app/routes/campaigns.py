@@ -16,9 +16,9 @@ from app.models import (
 from app.services import campaigns as svc
 from app.services.audit import audit
 from app.services.events import health, since
-from app.services.importer import parse_tags
+from app.services.importer import parse_tags, tag_counts
 from app.services.scheduler import mark_sent
-from app.ui import flash, form_data, render
+from app.ui import flash, form_data, local_time, render
 
 router = APIRouter(prefix="/campaigns", dependencies=[Depends(verify_csrf)])
 managers = require_role("admin", "manager")
@@ -42,42 +42,52 @@ def sent_steps(db: Session, campaign: Campaign) -> set[int]:
     return set(db.scalars(select(Message.step_no).where(Message.campaign_id == campaign.id).distinct()))
 
 
-def apply_form(db: Session, campaign: Campaign, form) -> str | None:
-    """Copy the create/edit form onto the campaign and its steps. Returns an error or None."""
+def form_tags(form) -> list[str]:
+    """Tags ticked in the list plus any typed in the 'other tags' box."""
+    return parse_tags(",".join([*form.getlist("tags"), str(form.get("tags_extra", ""))]))
+
+
+def parse_countries(raw: str) -> list[str]:
+    return [c.strip().upper() for c in raw.split(",") if c.strip()]
+
+
+def apply_form(db: Session, campaign: Campaign, form) -> tuple[str, str] | None:
+    """Copy the create/edit form onto the campaign and its steps.
+    Returns (field, error) for the first problem, or None. Nothing is changed when there is a problem."""
     name = str(form.get("name", "")).strip()
     if not name:
-        return "Campaign name is required."
+        return "name", "Campaign name is required."
+    provider = campaign.provider
     if campaign.id is None or campaign.status == "draft":
         provider = form.get("provider", "")
         if provider not in ("ses", "smtp"):
-            return "Choose SES or SMTP."
-        campaign.provider = provider
-    tags = parse_tags(str(form.get("tags", "")))
+            return "provider", "Choose SES or SMTP."
+    tags = form_tags(form)
     if not tags:
-        return "Add at least one lead tag for the segment."
-    countries = [c.strip().upper() for c in str(form.get("countries", "")).split(",") if c.strip()]
+        return "tags", "Pick at least one lead tag for the segment."
+    countries = parse_countries(str(form.get("countries", "")))
     weekdays = [int(d) for d in form.getlist("weekdays") if str(d).isdigit() and 0 <= int(d) <= 6]
     schedule, problem = svc.validate_schedule(str(form.get("windows", "")), weekdays,
                                               str(form.get("default_tz", "")).strip() or "America/New_York")
     if problem:
-        return problem
+        return "schedule", problem
     daily_cap = str(form.get("daily_cap", "")).strip()
     if not daily_cap.isdigit() or not 1 <= int(daily_cap) <= 10_000:
-        return "Daily cap must be between 1 and 10,000."
+        return "daily_cap", "Daily cap must be between 1 and 10,000."
     start_at = None
     if start_date := str(form.get("start_date", "")).strip():
         try:
             day = datetime.strptime(start_date, "%Y-%m-%d").date()
         except ValueError:
-            return "Start date must be a date."
+            return "start_date", "Start date must be a date."
         start_at = datetime.combine(day, time(0), tzinfo=ZoneInfo(schedule["default_tz"])).astimezone(timezone.utc)
 
     sender_ids = {int(i) for i in form.getlist("sender_ids") if str(i).isdigit()}
     senders = db.scalars(select(Sender).where(Sender.id.in_(sender_ids))).all() if sender_ids else []
     if not senders:
-        return "Pick at least one sender."
-    if any(s.type != campaign.provider for s in senders):
-        return f"A {campaign.provider.upper()} campaign can only use {campaign.provider.upper()} senders."
+        return "senders", "Pick at least one sender."
+    if any(s.type != provider for s in senders):
+        return "senders", f"A {provider.upper()} campaign can only use {provider.upper()} senders."
 
     steps = []
     for n in range(1, svc.MAX_STEPS + 1):
@@ -85,19 +95,21 @@ def apply_form(db: Session, campaign: Campaign, form) -> str | None:
         if not template_id.isdigit():
             continue
         if db.get(Template, int(template_id)) is None:
-            return f"Step {n}: template not found."
+            return "steps", f"Step {n}: template not found."
         delay = str(form.get(f"step_{n}_delay", "0")).strip() or "0"
         if not delay.isdigit() or (n > 1 and int(delay) < 1):
-            return f"Step {n}: follow-ups need a delay of at least 1 business day."
+            return "steps", f"Step {n}: follow-ups need a delay of at least 1 business day."
         steps.append((n, int(template_id), 0 if n == 1 else int(delay), bool(form.get(f"step_{n}_same_thread"))))
     if not steps or steps[0][0] != 1:
-        return "Step 1 (the initial email) needs a template."
+        return "steps", "Step 1 (the initial email) needs a template."
     if [n for n, *_ in steps] != list(range(1, len(steps) + 1)):
-        return "Steps must be filled in order without gaps."
+        return "steps", "Steps must be filled in order without gaps."
     if campaign.id is not None:
         missing_sent = sent_steps(db, campaign) - {n for n, *_ in steps}
         if missing_sent:
-            return f"Step(s) {sorted(missing_sent)} already sent emails and can't be removed."
+            return "steps", f"Step(s) {sorted(missing_sent)} already sent emails and can't be removed."
+
+    campaign.provider = provider
 
     campaign.name, campaign.daily_cap, campaign.schedule, campaign.start_at = name, int(daily_cap), schedule, start_at
     campaign.segment = {"tags": tags, "countries": countries}
@@ -117,21 +129,82 @@ def apply_form(db: Session, campaign: Campaign, form) -> str | None:
     return None
 
 
-def form_context(db: Session, campaign: Campaign | None) -> dict:
-    steps = {s.step_no: s for s in svc.steps_of(db, campaign)} if campaign and campaign.id else {}
+def values_from_campaign(db: Session, campaign: Campaign | None) -> dict:
+    """What the form shows for a saved campaign (or the defaults for a new one)."""
     schedule = campaign.schedule if campaign and campaign.schedule else DEFAULT_SCHEDULE
+    steps = svc.steps_of(db, campaign) if campaign else []
+    return {
+        "name": campaign.name if campaign else "",
+        "provider": campaign.provider if campaign else "ses",
+        "tags": campaign.segment.get("tags", []) if campaign else [],
+        "countries": ", ".join(campaign.segment.get("countries", [])) if campaign else "",
+        "allow_canada": bool(campaign and campaign.allow_canada),
+        "windows": ", ".join(f"{a}-{b}" for a, b in schedule["windows"]),
+        "weekdays": schedule["weekdays"],
+        "default_tz": schedule["default_tz"],
+        "daily_cap": campaign.daily_cap if campaign else 400,
+        "start_date": local_time(campaign.start_at, "%Y-%m-%d") if campaign and campaign.start_at else "",
+        "stop_company": campaign.stop_company_on_reply if campaign else True,
+        "sender_ids": {s.id for s in svc.pool_of(db, campaign)} if campaign else set(),
+        "steps": {s.step_no: {"template_id": s.template_id, "delay": s.delay_business_days,
+                              "same_thread": s.same_thread} for s in steps},
+    }
+
+
+def values_from_form(form) -> dict:
+    """The form exactly as it was filled in, to show it again after an error."""
+    steps = {}
+    for n in range(1, svc.MAX_STEPS + 1):
+        template_id = str(form.get(f"step_{n}_template", ""))
+        steps[n] = {"template_id": int(template_id) if template_id.isdigit() else None,
+                    "delay": str(form.get(f"step_{n}_delay", "")), "same_thread": bool(form.get(f"step_{n}_same_thread"))}
+    return {
+        "name": str(form.get("name", "")),
+        "provider": str(form.get("provider", "")),
+        "tags": form_tags(form),
+        "countries": str(form.get("countries", "")),
+        "allow_canada": bool(form.get("allow_canada")),
+        "windows": str(form.get("windows", "")),
+        "weekdays": [int(d) for d in form.getlist("weekdays") if str(d).isdigit()],
+        "default_tz": str(form.get("default_tz", "")),
+        "daily_cap": str(form.get("daily_cap", "")),
+        "start_date": str(form.get("start_date", "")),
+        "stop_company": bool(form.get("stop_company_on_reply")),
+        "sender_ids": {int(i) for i in form.getlist("sender_ids") if str(i).isdigit()},
+        "steps": steps,
+    }
+
+
+def form_context(db: Session, campaign: Campaign | None, values: dict, error: tuple[str, str] | None = None) -> dict:
+    all_tags, new_leads = tag_counts(db), tag_counts(db, "new")
     return {
         "c": campaign,
-        "steps": steps,
+        "f": values,
+        "error": {"field": error[0], "message": error[1]} if error else None,
+        # Every tag in use (plus any the campaign already has), with how many New leads carry it.
+        "tag_options": {t: new_leads.get(t, 0) for t in sorted(set(all_tags) | set(values["tags"]))},
         "templates": db.scalars(select(Template).order_by(Template.name)).all(),
         "senders": db.scalars(select(Sender).where(Sender.status != "disabled").order_by(Sender.type, Sender.from_email)).all(),
-        "pool_ids": {s.id for s in svc.pool_of(db, campaign)} if campaign and campaign.id else set(),
-        "schedule": schedule,
-        "windows": ", ".join(f"{a}-{b}" for a, b in schedule["windows"]),
         "weekdays": WEEKDAYS,
         "max_steps": svc.MAX_STEPS,
-        "locked_steps": sent_steps(db, campaign) if campaign and campaign.id else set(),
+        "locked_steps": sent_steps(db, campaign) if campaign else set(),
     }
+
+
+@router.post("/segment-preview")
+def segment_preview(request: Request, form=Depends(form_data), db: Session = Depends(get_db),
+                    user: User = Depends(managers)):
+    """Live count on the campaign form: how many leads the chosen tags and countries would enroll."""
+    tags = form_tags(form)
+    summary = None
+    if tags:
+        campaign_id = str(form.get("campaign_id", ""))
+        draft = Campaign(id=int(campaign_id) if campaign_id.isdigit() else None,  # never added to the session
+                         provider=form.get("provider") if form.get("provider") in ("ses", "smtp") else "ses",
+                         segment={"tags": tags, "countries": parse_countries(str(form.get("countries", "")))},
+                         allow_canada=bool(form.get("allow_canada")))
+        summary = svc.segment_summary(db, draft)
+    return render(request, "campaigns/_segment.html", summary=summary)
 
 
 @router.get("")
@@ -150,7 +223,7 @@ def list_campaigns(request: Request, db: Session = Depends(get_db), user: User =
 
 @router.get("/new")
 def new_campaign(request: Request, db: Session = Depends(get_db), user: User = Depends(managers)):
-    return render(request, "campaigns/edit.html", **form_context(db, None))
+    return render(request, "campaigns/edit.html", **form_context(db, None, values_from_campaign(db, None)))
 
 
 @router.post("")
@@ -160,8 +233,7 @@ def create_campaign(request: Request, form=Depends(form_data), db: Session = Dep
     problem = apply_form(db, campaign, form)
     if problem:
         db.rollback()
-        flash(request, problem, "error")
-        return RedirectResponse("/campaigns/new", status_code=303)
+        return render(request, "campaigns/edit.html", 400, **form_context(db, None, values_from_form(form), problem))
     audit(db, request, user, "campaign_created", "campaign", campaign.id, name=campaign.name)
     db.commit()
     flash(request, "Campaign saved as draft. Check the pre-launch list, then start it.")
@@ -174,7 +246,7 @@ def edit_campaign(request: Request, campaign_id: int, db: Session = Depends(get_
     if campaign.status not in EDITABLE:
         flash(request, "Pause the campaign before editing it.", "error")
         return RedirectResponse(f"/campaigns/{campaign.id}", status_code=303)
-    return render(request, "campaigns/edit.html", **form_context(db, campaign))
+    return render(request, "campaigns/edit.html", **form_context(db, campaign, values_from_campaign(db, campaign)))
 
 
 @router.post("/{campaign_id}/edit")
@@ -186,8 +258,8 @@ def save_campaign(request: Request, campaign_id: int, form=Depends(form_data), d
     problem = apply_form(db, campaign, form)
     if problem:
         db.rollback()
-        flash(request, problem, "error")
-        return RedirectResponse(f"/campaigns/{campaign.id}/edit", status_code=303)
+        return render(request, "campaigns/edit.html", 400,
+                      **form_context(db, campaign, values_from_form(form), problem))
     audit(db, request, user, "campaign_updated", "campaign", campaign.id)
     db.commit()
     flash(request, "Campaign saved.")
@@ -254,6 +326,13 @@ def campaign_detail(request: Request, campaign_id: int, db: Session = Depends(ge
     )
 
 
+@router.get("/{campaign_id}/plan")
+def plan_partial(request: Request, campaign_id: int, db: Session = Depends(get_db), user: User = Depends(managers)):
+    """HTMX partial for the campaign page: the day-by-day send estimate."""
+    c = get_campaign(db, campaign_id)
+    return render(request, "campaigns/_plan.html", c=c, plan=svc.plan_for(db, c, datetime.now(timezone.utc)))
+
+
 def change(request: Request, db: Session, user: User, c: Campaign, action: str, message: str):
     audit(db, request, user, f"campaign_{action}", "campaign", c.id, status=c.status)
     db.commit()
@@ -266,7 +345,7 @@ def start_campaign(request: Request, campaign_id: int, db: Session = Depends(get
     c = get_campaign(db, campaign_id)
     if c.status != "draft":
         raise HTTPException(status_code=400, detail="Only a draft campaign can be started.")
-    failed = [label for label, ok, _ in svc.preflight(db, c) if not ok]
+    failed = [label for label, ok, *_ in svc.preflight(db, c) if not ok]
     if failed:
         flash(request, "Fix the pre-launch checklist first: " + ", ".join(failed), "error")
         return RedirectResponse(f"/campaigns/{c.id}", status_code=303)
@@ -288,7 +367,7 @@ def resume_campaign(request: Request, campaign_id: int, db: Session = Depends(ge
     c = get_campaign(db, campaign_id)
     if c.status != "paused":
         raise HTTPException(status_code=400, detail="Campaign is not paused.")
-    failed = [label for label, ok, _ in svc.preflight(db, c) if not ok]
+    failed = [label for label, ok, *_ in svc.preflight(db, c) if not ok]
     if failed:
         flash(request, "Fix the pre-launch checklist first: " + ", ".join(failed), "error")
         return RedirectResponse(f"/campaigns/{c.id}", status_code=303)

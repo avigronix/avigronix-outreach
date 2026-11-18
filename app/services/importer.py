@@ -171,6 +171,15 @@ def parse_tags(raw: str) -> list[str]:
     return sorted({t for t in tags if t})
 
 
+def tag_counts(db: Session, status: str | None = None) -> dict[str, int]:
+    """Every tag in use → how many leads carry it (only leads with `status`, when given), sorted by tag."""
+    tags = select(func.unnest(Lead.tags).label("tag"))
+    if status:
+        tags = tags.where(Lead.status == status)
+    tags = tags.subquery()
+    return dict(db.execute(select(tags.c.tag, func.count()).group_by(tags.c.tag).order_by(tags.c.tag)).all())
+
+
 def slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_") or "field"
 

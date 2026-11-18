@@ -9,10 +9,12 @@ from sqlalchemy.orm import Session
 
 from app.auth import current_user, require_role, verify_csrf
 from app.db import get_db
-from app.models import LEAD_STATUSES, SOURCE_TYPES, Campaign, Enrollment, Event, Lead, LeadImport, Message, User
+from app.models import (
+    LEAD_STATUSES, SOURCE_TYPES, Campaign, Enrollment, Event, Lead, LeadImport, Message, Reply, User,
+)
 from app.services.audit import audit
 from app.services.crypto import unsubscribe_url
-from app.services.importer import parse_tags
+from app.services.importer import parse_tags, tag_counts
 from app.services.suppression import stop_lead, suppress
 from app.ui import flash, form_data, render
 
@@ -87,6 +89,7 @@ def list_leads(request: Request, page: int = 1, db: Session = Depends(get_db), u
         filters=filters, query=urlencode(filters), statuses=LEAD_STATUSES, source_types=SOURCE_TYPES,
         owners=owners, can_manage=user.role in ("admin", "manager"),
         campaigns=db.execute(select(Campaign.id, Campaign.name).order_by(Campaign.id.desc())).all(),
+        tags=list(tag_counts(db)),
     )
 
 
@@ -112,7 +115,8 @@ def export_csv(request: Request, db: Session = Depends(get_db), user: User = Dep
 @router.post("/bulk")
 def bulk_action(request: Request, form=Depends(form_data), db: Session = Depends(get_db), user: User = Depends(managers)):
     action = form.get("action", "")
-    value = str(form.get("value", "")).strip()
+    # The owner comes from its own dropdown (user ids), tags from the text box.
+    value = str(form.get("owner_value" if action == "set_owner" else "value", "")).strip()
     filters = read_filters(form)
     back = RedirectResponse(f"/leads?{urlencode(filters)}", status_code=303)
 
@@ -159,6 +163,45 @@ def bulk_action(request: Request, form=Depends(form_data), db: Session = Depends
     return back
 
 
+EVENT_STEPS = {  # event type → (icon, tone, title) on the lead's journey
+    "delivery": ("check", "green", "Delivered"),
+    "bounce_hard": ("alert", "red", "Bounced (address does not exist)"),
+    "bounce_soft": ("alert", "amber", "Soft bounce (mailbox full or busy)"),
+    "complaint": ("alert", "red", "Marked as spam"),
+    "reject": ("alert", "red", "Rejected by SES"),
+    "unsubscribe": ("suppression", "red", "Unsubscribed"),
+}
+MESSAGE_TONES = {"sent": "blue", "failed": "red", "retry": "amber", "unknown": "amber", "sending": "amber"}
+
+
+def journey_of(lead: Lead, imp: LeadImport | None, messages, events, replies) -> list[dict]:
+    """Everything that happened to a lead, oldest first: added, each email, delivery/bounce events, replies."""
+    steps = [{"when": lead.created_at, "icon": "imports", "tone": "grey", "title": "Added to the leads",
+              "detail": f"Import: {imp.list_name or imp.file_name}" if imp else SOURCE_TYPES.get(lead.source_type, "")}]
+    for m, campaign_name in messages:
+        state = "" if m.status == "sent" else f" ({m.status})"
+        steps.append({"when": m.sent_at or m.created_at, "icon": "campaigns", "tone": MESSAGE_TONES.get(m.status, "blue"),
+                      "title": ("Initial email" if m.step_no == 1 else f"Follow-up {m.step_no - 1}") + " sent" + state,
+                      "detail": f"{campaign_name} · “{m.subject}”" + (f" · {m.error}" if m.error else ""),
+                      "text": m.body_text})
+    for e in events:
+        if e.type in EVENT_STEPS:  # replies come from the replies table below, with their text
+            icon, tone, title = EVENT_STEPS[e.type]
+            steps.append({"when": e.occurred_at, "icon": icon, "tone": tone, "title": title,
+                          "detail": e.detail if e.type != "delivery" else ""})
+    for r in replies:
+        if r.direction == "out":
+            steps.append({"when": r.received_at, "icon": "replies", "tone": "blue", "title": "We replied",
+                          "detail": f"from {r.from_email}", "text": r.body_text})
+        else:
+            title = {"auto_reply": "Auto-reply (out of office)", "unsubscribe_request": "Asked to be removed"}.get(
+                r.classification, "Replied")
+            steps.append({"when": r.received_at, "icon": "replies",
+                          "tone": "grey" if r.classification == "auto_reply" else "green", "title": title,
+                          "detail": r.body_text[:160], "text": r.body_text, "link": f"/replies?tab=all&id={r.id}"})
+    return sorted(steps, key=lambda s: s["when"])
+
+
 @router.get("/{lead_id}")
 def lead_detail(request: Request, lead_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
     lead = get_lead(db, lead_id, user)
@@ -166,11 +209,12 @@ def lead_detail(request: Request, lead_id: int, db: Session = Depends(get_db), u
     enrollments = db.execute(select(Enrollment, Campaign.name).join(Campaign, Campaign.id == Enrollment.campaign_id)
                              .where(Enrollment.lead_id == lead.id).order_by(Enrollment.id.desc())).all()
     messages = db.execute(select(Message, Campaign.name).join(Campaign, Campaign.id == Message.campaign_id)
-                          .where(Message.lead_id == lead.id).order_by(Message.id.desc())).all()
+                          .where(Message.lead_id == lead.id)).all()
+    events = db.scalars(select(Event).where(Event.lead_id == lead.id)).all()
+    replies = db.scalars(select(Reply).where(Reply.lead_id == lead.id)).all()
     return render(
         request, "leads/detail.html", lead=lead, imp=imp, statuses=LEAD_STATUSES, source_types=SOURCE_TYPES,
-        enrollments=enrollments, messages=messages,
-        events=db.scalars(select(Event).where(Event.lead_id == lead.id).order_by(Event.occurred_at.desc())).all(),
+        enrollments=enrollments, journey=journey_of(lead, imp, messages, events, replies),
         users=active_users(db), can_manage=user.role in ("admin", "manager"),
         unsubscribe_link=unsubscribe_url(lead.email) if user.role == "admin" else None,
     )
