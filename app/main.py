@@ -9,10 +9,12 @@ from starlette.middleware.sessions import SessionMiddleware
 from app.auth import LoginRequired
 from app.config import settings
 from app.routes import (
-    auth, campaigns, dashboard, imports, leads, public, replies, reports, search, senders, suppression, templates, users,
+    account, auth, campaigns, dashboard, imports, leads, public, replies, reports, search, senders, suppression,
+    templates, users,
 )
 from app.routes import settings as settings_routes
-from app.ui import render
+from app.services.replies import ReplyTaken
+from app.ui import flash, render
 
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -27,6 +29,7 @@ app.add_middleware(
 app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
 
 app.include_router(auth.router)
+app.include_router(account.router)
 app.include_router(dashboard.router)
 app.include_router(users.router)
 app.include_router(settings_routes.router)
@@ -52,6 +55,15 @@ def login_required(request: Request, exc: LoginRequired):
     if request.headers.get("hx-request"):
         return Response(status_code=204, headers={"HX-Redirect": "/login"})
     return RedirectResponse("/login", status_code=303)
+
+
+@app.exception_handler(ReplyTaken)
+def reply_taken(request: Request, exc: ReplyTaken):
+    """Two people on the same reply: the second one is told, nothing is changed."""
+    flash(request, f"{exc.name} already took this reply, so nothing was changed.", "error")
+    if request.headers.get("hx-request"):
+        return Response(status_code=204, headers={"HX-Redirect": "/replies"})
+    return RedirectResponse("/replies", status_code=303)
 
 
 @app.exception_handler(StarletteHTTPException)

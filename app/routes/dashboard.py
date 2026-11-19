@@ -6,18 +6,63 @@ from sqlalchemy.orm import Session
 
 from app.auth import current_user
 from app.db import get_db
-from app.models import Campaign, Enrollment, Lead, Message, Reply, Sender, User, get_app_settings
+from app.models import LEAD_STATUSES, Campaign, Enrollment, Lead, Message, Reply, Sender, User, get_app_settings
 from app.services import reports
 from app.services.alerts import send_alert
 from app.services.replies import tab_filter, visible
 from app.services.scheduler import next_day_start
 from app.services.warmup import effective_daily_cap
-from app.ui import render
+from app.ui import render, today_ist
 
 router = APIRouter()
 
 WORKER_STALE_AFTER = timedelta(minutes=5)
 WORKER_ALERT_EVERY = timedelta(hours=1)
+MY_PERIOD = timedelta(days=30)
+
+
+def my_work(db: Session, user: User, now: datetime) -> dict:
+    """The personal half of the dashboard (every role): what is waiting for me, and how my month went."""
+    since = now - MY_PERIOD
+    mine = tab_filter(visible(user), "mine", user)
+    handled = select(Reply.outcome, func.count()).where(
+        Reply.assigned_to == user.id, Reply.direction == "in", Reply.handled_at >= since).group_by(Reply.outcome)
+    outcomes = dict(db.execute(handled).all())
+    pipeline = dict(db.execute(select(Lead.status, func.count()).where(Lead.owner_id == user.id)
+                               .group_by(Lead.status)).all())
+    return {
+        "my_open": db.scalar(select(func.count()).select_from(mine.subquery())),
+        "my_unclaimed": db.scalar(select(func.count()).select_from(
+            tab_filter(visible(user), "unclaimed", user).subquery())),
+        "my_handled": sum(outcomes.values()),
+        "my_interested": outcomes.get("interested", 0) + outcomes.get("meeting_booked", 0),
+        "my_meetings": outcomes.get("meeting_booked", 0),
+        "my_sent": db.scalar(select(func.count()).select_from(Reply).where(
+            Reply.sent_by == user.id, Reply.direction == "out", Reply.received_at >= since)),
+        "my_leads": sum(pipeline.values()),
+        "pipeline": [(key, label, pipeline[key]) for key, label in LEAD_STATUSES.items() if pipeline.get(key)],
+        "follow_ups": db.scalars(select(Lead).where(Lead.owner_id == user.id, Lead.follow_up_on.is_not(None))
+                                 .order_by(Lead.follow_up_on, Lead.id).limit(8)).all(),
+        "today": today_ist(),
+    }
+
+
+def team_rows(db: Session, now: datetime) -> list[dict]:
+    """Per person, last 30 days: replies handled, positive outcomes, replies sent, still open. For managers."""
+    since = now - MY_PERIOD
+    users = db.scalars(select(User).where(User.is_active).order_by(User.name)).all()
+    handled = dict(db.execute(select(Reply.assigned_to, func.count()).where(
+        Reply.direction == "in", Reply.handled_at >= since).group_by(Reply.assigned_to)).all())
+    positive = dict(db.execute(select(Reply.assigned_to, func.count()).where(
+        Reply.direction == "in", Reply.handled_at >= since, Reply.outcome.in_(reports.POSITIVE))
+        .group_by(Reply.assigned_to)).all())
+    sent = dict(db.execute(select(Reply.sent_by, func.count()).where(
+        Reply.direction == "out", Reply.received_at >= since).group_by(Reply.sent_by)).all())
+    open_ = dict(db.execute(tab_filter(select(Reply.assigned_to, func.count()).where(Reply.direction == "in"),
+                                       "needs_action").group_by(Reply.assigned_to)).all())
+    rows = [{"user": u, "handled": handled.get(u.id, 0), "positive": positive.get(u.id, 0),
+             "sent": sent.get(u.id, 0), "open": open_.get(u.id, 0)} for u in users]
+    return [r for r in rows if r["handled"] or r["sent"] or r["open"] or r["user"].role == "sales"]
 
 
 @router.get("/")
@@ -42,7 +87,7 @@ def dashboard(request: Request, background: BackgroundTasks, db: Session = Depen
     needs_action = db.execute(tab_filter(visible(user), "needs_action").add_columns(Lead)
                               .order_by(Reply.received_at.desc()).limit(4)).all()
     context = {"now": now, "heartbeat": heartbeat, "worker_ok": worker_ok, "auto_paused": auto_paused,
-               "needs_action": needs_action}
+               "needs_action": needs_action, **my_work(db, user, now)}
 
     if user.role in ("admin", "manager"):
         week_ago = now - timedelta(days=7)
@@ -72,5 +117,6 @@ def dashboard(request: Request, background: BackgroundTasks, db: Session = Depen
             bounce_level=reports.bounce_level,
             complaint_level=reports.complaint_level,
             limits=s,
+            team=team_rows(db, now),
         )
     return render(request, "dashboard.html", **context)

@@ -100,6 +100,36 @@
     </form>
     {% endif %}
 
+    <div class="card form-card">
+      <h2>Follow up</h2>
+      <p class="muted-sm">Owner: {% if owner %}<span class="owner-chip"><span class="avatar">{{ owner.name|initials }}</span>{{ owner.name }}</span>{% else %}nobody yet (setting a follow-up makes it yours){% endif %}</p>
+      {% if lead.follow_up_on %}
+        {% set days = (lead.follow_up_on - today).days %}
+        <p class="follow-row"><span class="due-badge {{ 'due-late' if days < 0 else 'due-today' if days == 0 else 'due-later' }}">{{ icon("calendar", 13) }} {{ lead.follow_up_on.strftime("%a %d %b %Y") }}</span>
+          <span class="muted-sm">{{ "overdue" if days < 0 else "today" if days == 0 else "in %d day%s"|format(days, "" if days == 1 else "s") }}</span></p>
+      {% endif %}
+      <form method="post" action="/leads/{{ lead.id }}/follow-up" class="follow-row">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="date" name="on" value="{{ lead.follow_up_on or '' }}" min="{{ today }}" aria-label="Follow-up date">
+        <button class="btn" type="submit">Set</button>
+      </form>
+      <div class="quick-dates">
+        {% for d, label in [(1, "Tomorrow"), (3, "In 3 days"), (7, "1 week"), (30, "1 month")] %}
+        <form method="post" action="/leads/{{ lead.id }}/follow-up" class="inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="days" value="{{ d }}">
+          <button class="btn btn-sm" type="submit">{{ label }}</button>
+        </form>
+        {% endfor %}
+        {% if lead.follow_up_on %}
+        <form method="post" action="/leads/{{ lead.id }}/follow-up" class="inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button class="btn btn-sm" type="submit">Clear</button>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+
     <form class="card form-card" method="post" action="/leads/{{ lead.id }}/notes">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <h2>Notes</h2>

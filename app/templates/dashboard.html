@@ -1,22 +1,54 @@
 {% extends "base.html" %}
 {% from "_macros.html" import campaign_status %}
+{% from "_icons.html" import icon %}
 {% set active = "dashboard" %}
 {% block title %}Dashboard{% endblock %}
 {% block content %}
-{% set labels = {"auto_reply": ("Auto-reply", "grey"), "unsubscribe_request": ("Unsubscribe request", "red"), "reply": ("New reply", "blue")} %}
-<div class="page-head">
-  <div>
-    <h1>Dashboard</h1>
-    <p class="subtitle">{{ now|local("%A, %d %b %Y") }} · times shown in IST, sends follow each lead's local time</p>
-  </div>
-  {% if user.role in ('admin', 'manager') %}
-  <div class="head-actions">
-    <a class="btn" href="/imports/new">Import leads</a>
-    <a class="btn btn-primary" href="/campaigns/new">New campaign</a>
-  </div>
+{% macro follow_up_card(follow_ups, today) %}
+<div class="card">
+  <div class="card-head"><h2>My follow-ups</h2><a href="/leads?owner=me&follow_up=set">All →</a></div>
+  {% for l in follow_ups %}
+    {% set days = (l.follow_up_on - today).days %}
+    <a class="list-row" href="/leads/{{ l.id }}">
+      <div><div class="list-title">{{ (l.first_name ~ " " ~ l.last_name).strip() or l.email }}</div>
+        <div class="muted-sm">{{ l.company or l.email }}</div></div>
+      <span class="due-badge {{ 'due-late' if days < 0 else 'due-today' if days == 0 else 'due-later' }}">
+        {{ "%d day%s late"|format(-days, "" if days == -1 else "s") if days < 0 else "Today" if days == 0 else "Tomorrow" if days == 1 else l.follow_up_on.strftime("%a %d %b") }}</span>
+    </a>
+  {% else %}
+    <div class="empty">{{ icon("calendar", 24) }}<strong>No follow-ups</strong>Set one from a reply or a lead page.</div>
+  {% endfor %}
+</div>
+{% endmacro %}
+{% macro pipeline_card(pipeline, total) %}
+<div class="card">
+  <div class="card-head"><h2>My leads</h2><a href="/leads?owner=me">{{ "{:,}".format(total) }} →</a></div>
+  {% if total %}
+  <div class="pipeline">{% for key, label, n in pipeline %}<span class="pipe-{{ key }}" style="width: {{ 100 * n / total }}%" title="{{ label }}: {{ n }}"></span>{% endfor %}</div>
+  <div class="pipe-legend">{% for key, label, n in pipeline %}<a class="muted" href="/leads?owner=me&status={{ key }}"><span><i class="pipe-{{ key }}"></i>{{ label }} {{ n }}</span></a>{% endfor %}</div>
+  {% else %}
+  <p class="muted">No leads are assigned to you yet. Taking a reply makes its lead yours.</p>
   {% endif %}
 </div>
+{% endmacro %}
+{% set labels = {"auto_reply": ("Auto-reply", "grey"), "unsubscribe_request": ("Unsubscribe request", "red"), "reply": ("New reply", "blue")} %}
+{% set hour = now|local("%H")|int %}
+<div class="page-head">
+  <div>
+    <h1 class="greeting">{{ "Good morning" if hour < 12 else "Good afternoon" if hour < 17 else "Good evening" }}, {{ user.name.split()[0] }}</h1>
+    <p class="subtitle">{{ now|local("%A, %d %b %Y") }} · times in IST, emails go out in each lead's local hours</p>
+  </div>
+  <div class="head-actions">
+    {% if user.role in ('admin', 'manager') %}
+    <a class="btn" href="/imports/new">{{ icon("imports", 16) }} Import leads</a>
+    <a class="btn btn-primary" href="/campaigns/new">{{ icon("campaigns", 16) }} New campaign</a>
+    {% else %}
+    <a class="btn btn-primary" href="/replies?tab={{ 'mine' if my_open else 'needs_action' }}">{{ icon("replies", 16) }} Open my inbox</a>
+    {% endif %}
+  </div>
+</div>
 
+{% if user.role in ('admin', 'manager') %}
 {% for url, name, reason in auto_paused %}
 <div class="banner banner-warn">
   <strong>{{ name }}</strong> — {{ reason }}. Clean the list before resuming.
@@ -27,6 +59,56 @@
 <div class="banner banner-warn">
   <strong>Worker not running:</strong> last heartbeat {{ heartbeat|local }} IST. No emails are sent until it is back
   (<code>systemctl status outreach-worker</code>). The admin has been emailed.
+</div>
+{% endif %}
+{% endif %}
+
+{% set due_now = follow_ups|selectattr("follow_up_on", "le", today)|list|length %}
+<div class="kpis">
+  <a class="card kpi kpi-link kpi-hero" href="/replies?tab=mine">
+    <div class="kpi-label"><span class="kpi-icon">{{ icon("inbox", 16) }}</span>Waiting for me</div>
+    <div class="kpi-value">{{ my_open }}</div>
+    <div class="muted-sm">replies you've taken that need an answer</div>
+  </a>
+  <a class="card kpi kpi-link" href="/replies?tab=unclaimed">
+    <div class="kpi-label"><span class="kpi-icon">{{ icon("hand", 16) }}</span>Up for grabs</div>
+    <div class="kpi-value">{{ my_unclaimed }}</div>
+    <div class="muted-sm">new replies nobody has taken yet</div>
+  </a>
+  <a class="card kpi kpi-link" href="/leads?owner=me&follow_up=due">
+    <div class="kpi-label"><span class="kpi-icon">{{ icon("calendar", 16) }}</span>Follow-ups due</div>
+    <div class="kpi-value">{{ due_now }}</div>
+    <div class="muted-sm">{{ "of your leads, today or overdue" if due_now else "nothing overdue" }}</div>
+  </a>
+  <div class="card kpi">
+    <div class="kpi-label"><span class="kpi-icon">{{ icon("star", 16) }}</span>My wins · 30 days</div>
+    <div class="kpi-value">{{ my_interested }}</div>
+    <div class="muted-sm">{{ my_meetings }} meeting{{ "s" if my_meetings != 1 }} · {{ my_handled }} handled · {{ my_sent }} sent</div>
+  </div>
+</div>
+
+{% if user.role == 'sales' %}
+<div class="grid-2-1">
+  <div class="card inbox-mini">
+    <div class="card-head"><h2>Replies needing action</h2><a href="/replies">Open inbox →</a></div>
+    {% for r, l in needs_action %}
+      <a class="inbox-item" href="/replies?id={{ r.id }}">
+        <div class="inbox-top"><strong>{{ (l.first_name ~ " " ~ l.last_name).strip() or r.from_email }} · {{ l.company }}</strong>
+          <span class="muted-sm">{{ r.received_at|local("%d %b") }}</span></div>
+        <div class="inbox-snippet">{{ r.body_text|truncate(90) }}</div>
+        <div class="inbox-foot">
+          <span class="badge badge-{{ labels[r.classification][1] }}">{{ labels[r.classification][0] }}</span>
+          {% if r.assigned_to is none %}<span class="unclaimed">Unclaimed</span>{% endif %}
+        </div>
+      </a>
+    {% else %}
+      <div class="empty">{{ icon("check", 26) }}<strong>All caught up</strong>New replies show up here within a few minutes.</div>
+    {% endfor %}
+  </div>
+  <div class="stack">
+    {{ follow_up_card(follow_ups, today) }}
+    {{ pipeline_card(pipeline, my_leads) }}
+  </div>
 </div>
 {% endif %}
 
@@ -61,10 +143,8 @@
     <div class="muted-sm">{{ interested_week }} interested · {{ need_action_total }} need action</div>
   </div>
 </div>
-{% endif %}
 
 <div class="grid-2-1">
-  {% if user.role in ('admin', 'manager') %}
   <div class="card">
     <div class="card-head">
       <div><h2>Daily sends vs today's cap</h2><div class="muted-sm">Last 10 business days · all senders</div></div>
@@ -82,10 +162,9 @@
       {% for day, n in days %}<span class="{{ 'today' if loop.last }}">{{ "Today" if loop.last else day.strftime("%d %b" if loop.first else "%d") }}</span>{% endfor %}
     </div>
   </div>
-  {% endif %}
 
   <div class="card inbox-mini">
-    <div class="card-head"><h2>Replies needing action</h2><a href="/replies">Open inbox</a></div>
+    <div class="card-head"><h2>Replies needing action</h2><a href="/replies">Open inbox →</a></div>
     {% for r, l in needs_action %}
       <a class="inbox-item" href="/replies?id={{ r.id }}">
         <div class="inbox-top"><strong>{{ (l.first_name ~ " " ~ l.last_name).strip() or r.from_email }} · {{ l.company }}</strong>
@@ -94,12 +173,39 @@
         <span class="badge badge-{{ labels[r.classification][1] }}">{{ labels[r.classification][0] }}</span>
       </a>
     {% else %}
-      <p class="muted">All caught up.</p>
+      <div class="empty">{{ icon("check", 26) }}<strong>All caught up</strong>Nothing is waiting.</div>
     {% endfor %}
   </div>
 </div>
 
-{% if user.role in ('admin', 'manager') %}
+<div class="grid-2-1 section">
+  <div class="card">
+    <div class="card-head"><div><h2>Team · last 30 days</h2><div class="muted-sm">Replies each person handled, wins (interested or meeting), replies sent, and what is still open</div></div></div>
+    {% set best = (team|map(attribute="handled")|max) if team else 0 %}
+    <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Person</th><th>Handled</th><th>Wins</th><th>Sent</th><th>Open now</th></tr></thead>
+      <tbody>
+      {% for row in team %}
+        <tr>
+          <td><span class="person"><span class="avatar avatar-sm">{{ row.user.name|initials }}</span><span><strong>{{ row.user.name }}</strong> <span class="muted-sm">{{ row.user.role }}</span></span></span></td>
+          <td>{{ row.handled }}{% if best %}<span class="meter"><i style="width: {{ 100 * row.handled / best }}%"></i></span>{% endif %}</td>
+          <td>{% if row.positive %}<span class="badge badge-green">{{ row.positive }}</span>{% else %}<span class="muted">0</span>{% endif %}</td>
+          <td>{{ row.sent }}</td>
+          <td>{% if row.open %}<a href="/replies?tab=needs_action">{{ row.open }}</a>{% else %}<span class="muted">0</span>{% endif %}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="5" class="muted">No activity yet. Add sales users from the Users page.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+  <div class="stack">
+    {{ follow_up_card(follow_ups, today) }}
+  </div>
+</div>
+
 <div class="card section">
   <div class="card-head"><h2>Campaigns</h2><a href="/campaigns">View all</a></div>
   <div class="table-wrap">

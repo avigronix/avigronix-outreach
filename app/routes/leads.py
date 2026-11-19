@@ -1,5 +1,6 @@
 import csv
 import io
+from datetime import date, timedelta
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
@@ -16,14 +17,14 @@ from app.services.audit import audit
 from app.services.crypto import unsubscribe_url
 from app.services.importer import parse_tags, tag_counts
 from app.services.suppression import stop_lead, suppress
-from app.ui import flash, form_data, render
+from app.ui import flash, form_data, render, today_ist
 
 router = APIRouter(prefix="/leads", dependencies=[Depends(verify_csrf)])
 managers = require_role("admin", "manager")
 admin_only = require_role("admin")
 
 PAGE_SIZE = 50
-FILTERS = ("q", "status", "tag", "source", "country", "state", "import_id", "owner", "campaign")
+FILTERS = ("q", "status", "tag", "source", "country", "state", "import_id", "owner", "campaign", "follow_up")
 EXPORT_COLUMNS = ["email", "first_name", "last_name", "company", "title", "website", "city", "state",
                   "country", "timezone", "industry", "status", "source_type", "tags", "notes"]
 
@@ -58,7 +59,13 @@ def filtered_leads(filters: dict[str, str], user: User):
         stmt = stmt.where(Lead.import_id == int(filters["import_id"]))
     if filters.get("campaign", "").isdigit():
         stmt = stmt.where(Lead.id.in_(select(Enrollment.lead_id).where(Enrollment.campaign_id == int(filters["campaign"]))))
-    if filters.get("owner") == "none":
+    if filters.get("follow_up") == "due":
+        stmt = stmt.where(Lead.follow_up_on <= today_ist())
+    elif filters.get("follow_up") == "set":
+        stmt = stmt.where(Lead.follow_up_on.is_not(None))
+    if filters.get("owner") == "me":
+        stmt = stmt.where(Lead.owner_id == user.id)
+    elif filters.get("owner") == "none":
         stmt = stmt.where(Lead.owner_id.is_(None))
     elif filters.get("owner", "").isdigit():
         stmt = stmt.where(Lead.owner_id == int(filters["owner"]))
@@ -67,7 +74,8 @@ def filtered_leads(filters: dict[str, str], user: User):
 
 def get_lead(db: Session, lead_id: int, user: User) -> Lead:
     lead = db.get(Lead, lead_id)
-    if lead is None or (user.role == "sales" and lead.owner_id != user.id):
+    # Sales open their own leads and unowned ones (a reply from the shared pool links here).
+    if lead is None or (user.role == "sales" and lead.owner_id not in (None, user.id)):
         raise HTTPException(status_code=404, detail="Lead not found.")
     return lead
 
@@ -89,7 +97,7 @@ def list_leads(request: Request, page: int = 1, db: Session = Depends(get_db), u
         filters=filters, query=urlencode(filters), statuses=LEAD_STATUSES, source_types=SOURCE_TYPES,
         owners=owners, can_manage=user.role in ("admin", "manager"),
         campaigns=db.execute(select(Campaign.id, Campaign.name).order_by(Campaign.id.desc())).all(),
-        tags=list(tag_counts(db)),
+        tags=list(tag_counts(db)), today=today_ist(),
     )
 
 
@@ -217,6 +225,7 @@ def lead_detail(request: Request, lead_id: int, db: Session = Depends(get_db), u
         enrollments=enrollments, journey=journey_of(lead, imp, messages, events, replies),
         users=active_users(db), can_manage=user.role in ("admin", "manager"),
         unsubscribe_link=unsubscribe_url(lead.email) if user.role == "admin" else None,
+        owner=db.get(User, lead.owner_id) if lead.owner_id else None, today=today_ist(),
     )
 
 
@@ -258,6 +267,36 @@ def save_notes(
     db.commit()
     flash(request, "Notes saved.")
     return RedirectResponse(f"/leads/{lead.id}", status_code=303)
+
+
+@router.post("/{lead_id}/follow-up")
+def set_follow_up(
+    request: Request,
+    lead_id: int,
+    on: str = Form(""),
+    days: str = Form(""),
+    next: str = Form(""),
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    """A reminder for the lead's owner: `days` (from today) or a date `on`; both empty clears it."""
+    lead = get_lead(db, lead_id, user)
+    if days.isdigit():
+        lead.follow_up_on = today_ist() + timedelta(days=int(days))
+    elif on:
+        try:
+            lead.follow_up_on = date.fromisoformat(on)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Pick a valid date.")
+    else:
+        lead.follow_up_on = None
+    if lead.owner_id is None:  # whoever sets the reminder is the one following up
+        lead.owner_id = user.id
+    db.commit()
+    flash(request, f"Follow-up set for {lead.follow_up_on.strftime('%a %d %b')}." if lead.follow_up_on
+          else "Follow-up cleared.")
+    target = next if next.startswith("/") and not next.startswith("//") else f"/leads/{lead.id}"
+    return RedirectResponse(target, status_code=303)
 
 
 @router.post("/{lead_id}/stop")

@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% set active = "account" %}
+{% block title %}My account{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div class="account-head">
+    <span class="avatar avatar-lg">{{ user.name|initials }}</span>
+    <div>
+      <h1>{{ user.name }}</h1>
+      <p class="subtitle">{{ user.email }} · {{ user.role|capitalize }}{% if user.last_login_at %} · last login {{ user.last_login_at|local }} IST{% endif %}</p>
+    </div>
+  </div>
+</div>
+
+<div class="grid-1-1">
+  <form class="card form-card" method="post" action="/account/name">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <h2>Your name</h2>
+    <p class="muted-sm">Shown to teammates on replies you handle and on the team table.</p>
+    {% if name_error %}<div class="flash flash-error">{{ name_error }}</div>{% endif %}
+    <label>Name <input type="text" name="name" value="{{ user.name }}" maxlength="120" required></label>
+    <button class="btn btn-primary" type="submit">Save name</button>
+  </form>
+
+  <form class="card form-card" method="post" action="/account/password">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <h2>Change password</h2>
+    <p class="muted-sm">At least 10 characters. Other devices are logged out; this one stays in.</p>
+    {% if password_error %}<div class="flash flash-error">{{ password_error }}</div>{% endif %}
+    <label>Current password <input type="password" name="current" autocomplete="current-password" required></label>
+    <label>New password <input type="password" name="new" minlength="10" autocomplete="new-password" required></label>
+    <label>New password again <input type="password" name="confirm" minlength="10" autocomplete="new-password" required></label>
+    <button class="btn btn-primary" type="submit">Change password</button>
+  </form>
+</div>
+{% endblock %}

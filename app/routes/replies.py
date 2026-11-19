@@ -14,15 +14,19 @@ from app.models import (
 from app.services.audit import audit
 from app.services.providers import SendError
 from app.services.render import lead_values, merge
-from app.services.replies import NEWEST_FIRST, next_in_tab, send_manual_reply, tab_filter, visible
+from app.services.replies import (
+    NEWEST_FIRST, ReplyTaken, claim, next_in_tab, send_manual_reply, tab_filter, visible,
+)
 from app.services.suppression import suppress
-from app.ui import flash, render
+from app.ui import flash, render, today_ist
 
 router = APIRouter(prefix="/replies", dependencies=[Depends(verify_csrf)])
 log = logging.getLogger("replies")
 
 TABS = {
     "needs_action": "Needs action",
+    "mine": "Mine",
+    "unclaimed": "Unclaimed",
     "interested": "Interested",
     "all": "All",
     "auto": "Auto-replies",
@@ -37,6 +41,9 @@ DONE_STATUSES = ("bounced", "complained", "unsubscribed", "do_not_contact")
 def get_reply(db: Session, reply_id: int, user: User) -> Reply:
     reply = db.scalar(visible(user).where(Reply.id == reply_id))
     if reply is None:
+        other = db.scalar(select(User).join(Reply, Reply.assigned_to == User.id).where(Reply.id == reply_id))
+        if other is not None:  # a teammate took it while this page was open
+            raise ReplyTaken(other.name)
         raise HTTPException(status_code=404, detail="Reply not found.")
     return reply
 
@@ -45,9 +52,10 @@ def get_reply(db: Session, reply_id: int, user: User) -> Reply:
 def inbox(request: Request, tab: str = "needs_action", id: int | None = None, db: Session = Depends(get_db),
           user: User = Depends(current_user)):
     tab = tab if tab in TABS else "needs_action"
-    counts = {t: db.scalar(select(func.count()).select_from(tab_filter(visible(user), t).subquery())) for t in TABS}
+    counts = {t: db.scalar(select(func.count()).select_from(tab_filter(visible(user), t, user).subquery()))
+              for t in TABS}
     rows = db.execute(
-        tab_filter(visible(user), tab).add_columns(Lead).order_by(*NEWEST_FIRST).limit(100)).all()
+        tab_filter(visible(user), tab, user).add_columns(Lead).order_by(*NEWEST_FIRST).limit(100)).all()
     selected = get_reply(db, id, user) if id else (rows[0][0] if rows else None)
 
     context = {"tab": tab, "tabs": TABS, "counts": counts, "rows": rows, "selected": selected,
@@ -76,6 +84,7 @@ def inbox(request: Request, tab: str = "needs_action", id: int | None = None, db
             users=db.scalars(select(User).where(User.is_active).order_by(User.name)).all(),
             reply_sender=reply_sender,
             senders_by_user={u.id: u.name for u in db.scalars(select(User))},
+            today=today_ist(),
             source_types=SOURCE_TYPES,
             # Ready-made replies with this lead's merge fields already filled in.
             snippets=[(s.title, merge(s.body, values)[0])
@@ -102,17 +111,17 @@ def set_outcome(request: Request, reply_id: int, outcome: str = Form(...), tab: 
     reply = get_reply(db, reply_id, user)
     if outcome not in REPLY_OUTCOMES:
         raise HTTPException(status_code=400, detail="Unknown outcome.")
+    assigned_before = reply.assigned_to
+    claim(db, reply, user)
     lead = db.get(Lead, reply.lead_id)
     before = {"reply": reply.id, "tab": tab, "outcome": reply.outcome, "lead_status": lead.status,
-              "assigned_to": reply.assigned_to,
+              "assigned_to": assigned_before,
               "handled_at": reply.handled_at.isoformat() if reply.handled_at else None}
     reply.outcome, reply.handled_at = outcome, datetime.now(timezone.utc)
     if outcome == "unsubscribe_request":
         suppress(db, lead.email, "email", "unsubscribe", "reply asked to be removed", user.id)
     elif lead.status not in DONE_STATUSES:
         lead.status = OUTCOME_STATUS[outcome]
-    if reply.assigned_to is None:
-        reply.assigned_to = user.id
     audit(db, request, user, "reply_outcome", "reply", reply.id, outcome=outcome)
     db.commit()
     undo = None
@@ -160,6 +169,7 @@ def assign(request: Request, reply_id: int, user_id: str = Form(""), tab: str = 
 def suppress_sender(request: Request, reply_id: int, tab: str = Form("needs_action"),
                     db: Session = Depends(get_db), user: User = Depends(current_user)):
     reply = get_reply(db, reply_id, user)
+    claim(db, reply, user)
     lead = db.get(Lead, reply.lead_id)
     suppress(db, lead.email, "email", "manual", "from replies inbox", user.id)
     if reply.outcome is None:
@@ -170,11 +180,34 @@ def suppress_sender(request: Request, reply_id: int, tab: str = Form("needs_acti
     return next_after(db, user, reply, tab)
 
 
+@router.post("/{reply_id}/claim")
+def claim_reply(request: Request, reply_id: int, tab: str = Form("needs_action"), db: Session = Depends(get_db),
+                user: User = Depends(current_user)):
+    """"Take it": the reply (and its lead, if unowned) becomes yours, so teammates see it is being handled.
+    HTMX (the reply box gets focus) gets a one-line note back; a plain form goes back to the reply."""
+    reply = get_reply(db, reply_id, user)
+    try:
+        took = claim(db, reply, user)
+    except ReplyTaken as exc:
+        db.rollback()
+        if request.headers.get("hx-request"):
+            return render(request, "_claim_note.html", taken_by=exc.name)
+        raise
+    if took:
+        audit(db, request, user, "reply_claimed", "reply", reply.id)
+    db.commit()
+    if request.headers.get("hx-request"):
+        return render(request, "_claim_note.html", taken_by=None)
+    flash(request, "It's yours. Teammates now see you are handling this reply.")
+    return back(reply, tab)
+
+
 @router.post("/{reply_id}/send")
 def send_reply(request: Request, reply_id: int, body: str = Form(""), action: str = Form("send"),
                tab: str = Form("needs_action"), db: Session = Depends(get_db), user: User = Depends(current_user)):
     """FR-8.5: answer from the dashboard (or just keep the text as a draft)."""
     reply = get_reply(db, reply_id, user)
+    claim(db, reply, user)
     reply.draft = body.strip()
     db.commit()
     if action == "draft":

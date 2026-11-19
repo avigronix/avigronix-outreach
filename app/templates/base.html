@@ -5,6 +5,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Outreach{% endblock %} · Avigronix</title>
+  <link rel="icon" type="image/png" href="/static/favicon.png">
+  <meta name="theme-color" content="#08122b">
   <link rel="stylesheet" href="/static/app.css">
   <script src="/static/htmx.min.js" defer></script>
   <script src="/static/app.js" defer></script>
@@ -13,17 +15,22 @@
 {% block layout %}
 <div class="shell">
   <aside class="sidebar">
-    <div class="brand">
-      <div class="brand-name">AVIGRONIX</div>
-      <div class="brand-sub">Outreach dashboard</div>
-    </div>
+    <a class="brand" href="/">
+      <img class="brand-mark" src="/static/logo-mark.png" alt="" width="40" height="23">
+      <div>
+        <div class="brand-name">AVIGRONIX</div>
+        <div class="brand-sub">Outreach</div>
+      </div>
+    </a>
     {% if user %}
     <button class="search-trigger" type="button" data-open-search>
       {{ icon("search", 16) }}<span>Search</span><kbd>Ctrl K</kbd>
     </button>
     {% endif %}
     <nav class="nav">
+      {% set ns = namespace(group="") %}
       {% for key, label, url, roles, ready in nav %}
+        {% if nav_groups.get(key) != ns.group %}{% set ns.group = nav_groups.get(key) %}<div class="nav-section">{{ ns.group }}</div>{% endif %}
         {% if ready %}
           <a href="{{ url }}" class="{{ 'active' if active == key }}"><span class="nav-label">{{ icon(key) }}{{ label }}</span>{% if badges.get(key) %}<span class="nav-badge">{{ badges[key] }}</span>{% endif %}</a>
         {% else %}
@@ -33,12 +40,20 @@
     </nav>
     {% if user %}
     <div class="signed-in">
-      <div class="muted-sm">Signed in as</div>
-      <div class="who">{{ user.name }} · {{ user.role|capitalize }}</div>
-      <form method="post" action="/logout">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <button class="link-btn" type="submit">Log out</button>
-      </form>
+      <div class="user-card">
+        <a class="avatar" href="/account" title="My account">{{ user.name|initials }}</a>
+        <div class="user-meta">
+          <div class="who">{{ user.name }}</div>
+          <div class="role">{{ user.role|capitalize }}</div>
+        </div>
+        <div class="user-actions">
+          <a class="icon-btn {{ 'active' if active == 'account' }}" href="/account" title="My account" aria-label="My account">{{ icon("account", 17) }}</a>
+          <form method="post" action="/logout" class="inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button class="icon-btn" type="submit" title="Log out" aria-label="Log out">{{ icon("logout", 17) }}</button>
+          </form>
+        </div>
+      </div>
     </div>
     {% endif %}
   </aside>

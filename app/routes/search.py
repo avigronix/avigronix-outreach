@@ -23,6 +23,7 @@ def search(request: Request, q: str = "", db: Session = Depends(get_db), user: U
     """HTMX partial. Empty query → the pages this user can open; otherwise matches in every group."""
     q = q.strip()
     pages = [(label, url) for key, label, url, roles, ready in NAV if ready and user.role in roles]
+    pages.append(("My account", "/account"))
     groups = []  # (group name, [(icon, title, subtitle, url)])
     if q:
         pages = [(label, url) for label, url in pages if q.lower() in label.lower()]

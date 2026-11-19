@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_icons.html" import icon %}
 {% set active = "replies" %}
 {% block title %}Replies{% endblock %}
 {% block content %}
@@ -21,12 +22,12 @@
     <p class="subtitle">Synced from the reply mailboxes every 3 minutes ·
       <span class="shortcut-hint"><kbd>j</kbd> <kbd>k</kbd> next / previous · <kbd>1</kbd>–<kbd>5</kbd> outcome · <kbd>r</kbd> reply</span></p>
   </div>
-  <div class="pills">
-    {% for key, label in tabs.items() %}
-      <a class="pill {{ 'pill-on' if key == tab }}" href="/replies?tab={{ key }}">{{ label }} · {{ counts[key] }}</a>
-    {% endfor %}
-  </div>
 </div>
+<nav class="tabbar" aria-label="Reply folders">
+  {% for key, label in tabs.items() %}
+    <a class="pill {{ 'pill-on' if key == tab }}" href="/replies?tab={{ key }}">{{ label }} <span class="tab-count">{{ counts[key] }}</span></a>
+  {% endfor %}
+</nav>
 
 {% if not rows %}
   <div class="card"><p class="muted">Nothing here. Replies show up within a few minutes of arriving.</p></div>
@@ -39,7 +40,12 @@
           <span class="muted-sm">{{ ago(r.received_at) }}</span></div>
         <div class="muted-sm">{{ [l.company, l.city, l.state or l.country]|select|join(" · ") }}</div>
         <div class="inbox-snippet">{{ r.body_text|truncate(60) }}</div>
-        {{ badge(r) }}
+        <div class="inbox-foot">
+          {{ badge(r) }}
+          {% if r.assigned_to is none %}{% if not r.outcome %}<span class="unclaimed">Unclaimed</span>{% endif %}
+          {% elif r.assigned_to == user.id %}<span class="owner-chip"><span class="avatar">{{ user.name|initials }}</span>You</span>
+          {% else %}<span class="owner-chip"><span class="avatar">{{ senders_by_user.get(r.assigned_to)|initials }}</span>{{ senders_by_user.get(r.assigned_to, "").split()[0] if senders_by_user.get(r.assigned_to) }}</span>{% endif %}
+        </div>
       </a>
     {% endfor %}
   </div>
@@ -48,6 +54,20 @@
   <div class="card inbox-thread">
     <div class="muted-sm">{{ campaign.name if campaign else "" }}{% if message %} · Step {{ message.step_no }}{{ " (follow-up %d)"|format(message.step_no - 1) if message.step_no > 1 }}{% endif %}</div>
     <h2 class="thread-subject">{{ selected.subject }}</h2>
+    {% if selected.assigned_to is none %}
+    <div class="claim-bar">
+      <span>{{ icon("hand", 16) }} Nobody has taken this reply yet. Take it so your teammates don't answer it too.</span>
+      <form method="post" action="/replies/{{ selected.id }}/claim" class="inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="tab" value="{{ tab }}">
+        <button class="btn btn-sm btn-primary" type="submit">Take it</button>
+      </form>
+    </div>
+    {% elif selected.assigned_to == user.id %}
+    <div class="claim-bar claim-bar-mine">{{ icon("check", 16) }} You are handling this reply.</div>
+    {% else %}
+    <div class="claim-bar claim-bar-other">{{ icon("account", 16) }} {{ senders_by_user.get(selected.assigned_to, "Someone") }} is handling this reply.</div>
+    {% endif %}
     {% if selected.classification == 'unsubscribe_request' and not selected.outcome and lead.status != 'unsubscribed' %}
     <div class="banner banner-danger">
       <div><strong>{{ selected.from_name or selected.from_email }} asked to be removed.</strong>
@@ -91,7 +111,10 @@
         <a class="muted-sm" href="/templates#snippets">Add ready-made replies</a>
         {% endif %}
       </div>
-      <textarea id="reply-body" name="body" rows="6" placeholder="Hi {{ lead.first_name or 'there' }}, thanks for getting back…">{{ selected.draft }}</textarea>
+      <textarea id="reply-body" name="body" rows="6" placeholder="Hi {{ lead.first_name or 'there' }}, thanks for getting back…"
+        {% if selected.assigned_to is none %}hx-post="/replies/{{ selected.id }}/claim" hx-trigger="focus once"
+        hx-target="#claim-note" hx-vals='{"tab": "{{ tab }}"}'{% endif %}>{{ selected.draft }}</textarea>
+      <div id="claim-note"></div>
       <p class="muted-sm">Same thread, sent through {{ "Amazon SES" if reply_sender.type == "ses" else "the SMTP mailbox" }}.
         Their message is quoted below yours, the footer is added, and the reply mailbox gets a copy (BCC).
         {% if reply_sender.status != 'active' %}<strong>Note: this sender is {{ reply_sender.status }} for campaigns.</strong>{% endif %}</p>
@@ -117,6 +140,33 @@
         <dt>Source</dt><dd>{{ source_types.get(lead.source_type, lead.source_type) }}</dd>
         <dt>Emails received</dt><dd>{{ sent_count }}{{ " of %d"|format(steps_total) if steps_total }}</dd>
       </dl>
+    </div>
+    <div class="card form-card">
+      <h2>Follow up</h2>
+      {% if lead.follow_up_on %}
+        {% set days = (lead.follow_up_on - today).days %}
+        <p class="follow-row"><span class="due-badge {{ 'due-late' if days < 0 else 'due-today' if days == 0 else 'due-later' }}">{{ icon("calendar", 13) }} {{ lead.follow_up_on.strftime("%a %d %b") }}</span>
+          <span class="muted-sm">{{ "overdue" if days < 0 else "today" if days == 0 else "in %d day%s"|format(days, "" if days == 1 else "s") }}</span></p>
+      {% else %}
+        <p class="muted-sm">Set a reminder. It shows on your dashboard on that day.</p>
+      {% endif %}
+      {% set here = "/replies?tab=%s&id=%d"|format(tab, selected.id) %}
+      <div class="quick-dates">
+        {% for d, label in [(2, "In 2 days"), (7, "1 week"), (14, "2 weeks")] %}
+        <form method="post" action="/leads/{{ lead.id }}/follow-up" class="inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="days" value="{{ d }}"><input type="hidden" name="next" value="{{ here }}">
+          <button class="btn btn-sm" type="submit">{{ label }}</button>
+        </form>
+        {% endfor %}
+        {% if lead.follow_up_on %}
+        <form method="post" action="/leads/{{ lead.id }}/follow-up" class="inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="next" value="{{ here }}">
+          <button class="btn btn-sm" type="submit">Clear</button>
+        </form>
+        {% endif %}
+      </div>
     </div>
     <div class="card form-card">
       <h2>Outcome</h2>

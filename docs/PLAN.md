@@ -325,6 +325,15 @@ Each phase ends with something you can run with `docker compose up -d` and test 
 - [x] Save draft; their message quoted below; footer + unsubscribe headers; refused if the address is suppressed; our copy in the mailbox is ignored by the IMAP poller
 - **You test:** reply to a lead from the dashboard; it lands in the same Gmail thread.
 
+### Phase 9 — Sales team, branding, look and feel ✅ done (18 Nov 2026, waiting for Vikas's OK)
+- [x] Avigronix logo (`static/logo.png`, `logo-mark.png`, `favicon.png`); split-screen login with show-password
+- [x] New visual system in `app.css` (brand blues, navy sidebar with groups, user card, cards/tables/forms/buttons)
+- [x] Team inbox without conflicts: shared pool of unclaimed replies for sales, **Take it** (also on first focus of the reply box), one `UPDATE … WHERE assigned_to IS NULL` decides who gets it; the loser is told and nothing changes; tabs Mine / Unclaimed
+- [x] Follow-up reminders on leads (migration 0011 `leads.follow_up_on`), quick buttons on replies and lead page, "Follow-up due" filter
+- [x] Dashboard "My work" for every role (waiting for me, up for grabs, follow-ups due, my wins, my leads pipeline); team table for managers; system alerts only for admin/manager
+- [x] My account page: change own name and password (other devices logged out)
+- **You test:** log in as two sales users, both open the same new reply, one presses Take it, the other is told.
+
 ---
 
 ## 7. `.env` variables
@@ -407,6 +416,7 @@ Nothing else. Chart on dashboard = plain CSS/SVG, no JS chart library. Timezones
 - **D19. Demo data** only on a test install: `.example` addresses, next sends 60 days away, refuses to run when real campaigns exist; `--remove-demo` deletes it.
 - **D20. Dashboard replies** (Phase 8) are stored in `replies` with direction "out" (not in `messages`, which are sequence steps); they never count in inbox numbers or reply rates. Provider interface gained an optional `bcc` (envelope only).
 - **D21. Deploy without Docker** (27 Oct 2026, Vikas): Ubuntu 22.04 server runs Python 3.12 (deadsnakes PPA; 3.10 is end-of-life Oct 2026) and PostgreSQL 16 (PGDG apt repo) + `.venv` in `/opt/outreach` + two systemd units in `deploy/`. Dockerfile and docker-compose.yml removed. Tests stay out of Git (`.gitignore`); pytest/httpx are not in `requirements.txt`. `UPLOAD_DIR`/`BACKUP_DIR` default to `data/…` relative to the app folder.
+- **D22. Sales replies** (18 Nov 2026): sales see replies assigned to them, from their own leads, and the pool (no assignee, lead without owner). Taking a reply also makes its unowned lead theirs; sales can open unowned leads but not other people's. Setting a follow-up on an unowned lead makes the setter its owner.
 - **D11. Running sequences:** editable only in Draft or Paused; steps already sent cannot be deleted.
 - **Still open (needed before Phase 3 testing):** physical postal address for the footer, final sender name/address, reply mailbox owner, lead source.
 

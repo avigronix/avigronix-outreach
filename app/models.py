@@ -1,7 +1,7 @@
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import (
-    BigInteger, Boolean, CheckConstraint, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint,
+    BigInteger, Boolean, CheckConstraint, Date, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint,
     func, text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
@@ -148,6 +148,8 @@ class Lead(TimestampMixin, Base):
     is_role: Mapped[bool] = mapped_column(Boolean, default=False)
     is_free_mail: Mapped[bool] = mapped_column(Boolean, default=False)
     soft_bounce_count: Mapped[int] = mapped_column(Integer, default=0)
+    # The owner's own reminder: "follow up with this lead on …" (shown on their dashboard when due).
+    follow_up_on: Mapped[date | None] = mapped_column(Date, index=True)
 
 
 class Suppression(TimestampMixin, Base):

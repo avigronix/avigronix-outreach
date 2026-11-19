@@ -1,0 +1,5 @@
+{% if taken_by %}
+<div class="claim-note claim-note-warn">{{ taken_by }} already took this reply. Don't answer it too. <a href="/replies">Back to the inbox</a></div>
+{% else %}
+<div class="claim-note">Taken by you. Teammates now see you are handling it.</div>
+{% endif %}

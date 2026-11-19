@@ -99,3 +99,25 @@ if (tplForm) {
   };
   if (body && counter) { body.addEventListener("input", count); count(); }
 }
+
+// ---------- show / hide password ----------
+document.querySelectorAll("[data-toggle-password]").forEach(btn => {
+  const field = document.getElementById(btn.dataset.togglePassword);
+  btn.addEventListener("click", () => {
+    const show = field.type === "password";
+    field.type = show ? "text" : "password";
+    btn.setAttribute("aria-label", show ? "Hide password" : "Show password");
+    btn.classList.toggle("on", show);
+    field.focus();
+  });
+});
+
+// ---------- login: show the spinner once, never double-submit ----------
+document.querySelectorAll("form.login-card").forEach(form => {
+  form.addEventListener("submit", () => {
+    const btn = form.querySelector("button[type=submit]");
+    btn.disabled = true;
+    btn.classList.add("is-busy");
+    btn.textContent = "Logging in…";
+  });
+});

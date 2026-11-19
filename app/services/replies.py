@@ -243,17 +243,23 @@ def send_manual_reply(db: Session, incoming: Reply, user: User, text: str) -> Re
 # ---------- inbox queries ----------
 
 def visible(user: User):
-    """Sales see replies assigned to them or from their own leads; admin/manager see all."""
+    """Admin/manager see every reply. Sales see replies assigned to them, replies from their own leads, and
+    the shared pool: replies nobody has taken yet from leads without an owner (first to take one gets it)."""
     stmt = select(Reply).join(Lead, Lead.id == Reply.lead_id).where(Reply.direction == "in")
     if user.role == "sales":
-        stmt = stmt.where(or_(Reply.assigned_to == user.id, Lead.owner_id == user.id))
+        stmt = stmt.where(or_(Reply.assigned_to == user.id, Lead.owner_id == user.id,
+                              and_(Reply.assigned_to.is_(None), Lead.owner_id.is_(None))))
     return stmt
 
 
-def tab_filter(stmt, tab: str):
+def tab_filter(stmt, tab: str, user: User | None = None):
     real = Reply.classification != "auto_reply"
     if tab == "needs_action":
         return stmt.where(real, Reply.outcome.is_(None))
+    if tab == "mine" and user is not None:
+        return stmt.where(real, Reply.outcome.is_(None), Reply.assigned_to == user.id)
+    if tab == "unclaimed":
+        return stmt.where(real, Reply.outcome.is_(None), Reply.assigned_to.is_(None))
     if tab == "interested":
         return stmt.where(Reply.outcome.in_(("interested", "meeting_booked")))
     if tab == "auto":
@@ -265,13 +271,38 @@ def needs_action_count(db: Session, user: User) -> int:
     return db.scalar(select(func.count()).select_from(tab_filter(visible(user), "needs_action").subquery()))
 
 
+class ReplyTaken(Exception):
+    """Someone else took this reply first; main.py turns it into a message and back to the inbox."""
+
+    def __init__(self, name: str):
+        super().__init__(name)
+        self.name = name
+
+
+def claim(db: Session, reply: Reply, user: User) -> bool:
+    """Take an unassigned reply before acting on it, so two people never answer the same lead.
+    One UPDATE … WHERE assigned_to IS NULL decides the race; the lead (if it has no owner yet) follows.
+    Returns True when `user` just took it, False when it was already assigned. Raises ReplyTaken when
+    someone else won the race. Does not commit."""
+    if reply.assigned_to is not None:
+        return False
+    won = db.execute(update(Reply).where(Reply.id == reply.id, Reply.assigned_to.is_(None))
+                     .values(assigned_to=user.id)).rowcount
+    db.refresh(reply)
+    if not won:
+        other = db.get(User, reply.assigned_to)
+        raise ReplyTaken(other.name if other else "someone else")
+    db.execute(update(Lead).where(Lead.id == reply.lead_id, Lead.owner_id.is_(None)).values(owner_id=user.id))
+    return True
+
+
 NEWEST_FIRST = (Reply.received_at.desc(), Reply.id.desc())
 
 
 def next_in_tab(db: Session, user: User, tab: str, current: Reply) -> Reply | None:
     """The reply listed below `current` in this tab (the list is newest first), else the top one; None when
     `current` was the last one. Used to open the next reply once one is handled."""
-    others = tab_filter(visible(user), tab).where(Reply.id != current.id)
+    others = tab_filter(visible(user), tab, user).where(Reply.id != current.id)
     below = or_(Reply.received_at < current.received_at,
                 and_(Reply.received_at == current.received_at, Reply.id < current.id))
     return db.scalar(others.where(below).order_by(*NEWEST_FIRST).limit(1)) or \
